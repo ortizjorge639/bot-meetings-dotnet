@@ -10,19 +10,30 @@ using Microsoft.Teams.Apps.Activities;
 using Microsoft.Teams.Apps.Activities.Events;
 using Microsoft.Teams.Cards;
 
-// Initialize Teams App - automatically uses CLIENT_ID, CLIENT_SECRET, and TENANT_ID from environment variables
 var builder = WebApplication.CreateBuilder(args);
+
+var tenantId = GetRequiredConfigurationValue(builder.Configuration, "Teams:TenantId");
+var clientId = GetRequiredConfigurationValue(builder.Configuration, "Teams:ClientId");
+var clientSecret = GetRequiredConfigurationValue(builder.Configuration, "Teams:ClientSecret");
+
 builder.AddTeams();
 var webApp = builder.Build();
 var teamsApp = webApp.UseTeams(true);
 
-// AZURE_* credentials must be set to use secrets.
-Environment.SetEnvironmentVariable("AZURE_TENANT_ID", builder.Configuration["Teams:TenantId"] ?? "");
-Environment.SetEnvironmentVariable("AZURE_CLIENT_ID", builder.Configuration["Teams:ClientId"] ?? "");
-Environment.SetEnvironmentVariable("AZURE_CLIENT_SECRET", builder.Configuration["Teams:ClientSecret"] ?? "");
-
-var credential = new DefaultAzureCredential();
+var credential = new ClientSecretCredential(tenantId, clientId, clientSecret);
 var graphClient = new GraphServiceClient(credential, new[] { "https://graph.microsoft.com/.default" });
+
+static string GetRequiredConfigurationValue(IConfiguration configuration, string key)
+{
+    var value = configuration[key];
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        throw new InvalidOperationException(
+            $"Missing required configuration '{key}'. Set it in local configuration or with the '{key.Replace(":", "__")}' environment variable.");
+    }
+
+    return value;
+}
 
 // Method to retrieve meeting transcript
 async Task<string> GetMeetingTranscriptAsync(string meetingResourceId, string userId)
@@ -265,4 +276,14 @@ teamsApp.OnMeetingLeave(async context =>
 });
 
 // Starts the Teams bot application and listens for incoming requests
+webApp.MapGet("/meeting", () => Results.Content(
+    """
+    <!doctype html>
+    <html>
+      <head><meta charset="utf-8"><title>Bot Meetings</title></head>
+      <body><h1>Bot Meetings</h1><p>This app is connected to the meeting.</p></body>
+    </html>
+    """,
+    "text/html"));
+
 webApp.Run();
