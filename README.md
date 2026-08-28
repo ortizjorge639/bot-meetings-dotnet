@@ -2,6 +2,8 @@
 
 This sample demonstrates a bot for Microsoft Teams that handles real-time meeting events (start, end, participant join/leave) and retrieves meeting transcripts via Microsoft Graph.
 
+Meeting-end webhooks enqueue transcript retrieval and return immediately. A hosted worker polls Microsoft Graph, retries delayed transcript publication, posts the transcript card proactively to the original meeting conversation, and stores an idempotent, chunked source document for agent context.
+
 ## Prerequisites
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
@@ -54,6 +56,7 @@ Add these application settings under **Settings** > **Environment variables**:
 | `Teams__TenantId` | Microsoft Entra tenant ID |
 | `Teams__ClientId` | App registration application (client) ID and bot ID |
 | `Teams__ClientSecret` | App registration client secret value |
+| `TranscriptIngestion__DataPath` | `/home/data/bot-meetings/transcript-ingestion` |
 
 Save the settings and restart the App Service. The application validates all
 three settings during startup and reports the missing setting by name.
@@ -62,6 +65,18 @@ The app registration requires the Microsoft Graph application permissions
 `OnlineMeetings.Read.All` and `OnlineMeetingTranscript.Read.All`, with tenant
 administrator consent. Transcript retrieval is also subject to the tenant's
 Teams meeting transcript API access settings and application access policy.
+
+The ingestion path must be outside `/home/site/wwwroot` so jobs and source
+documents survive App Service deployments. Jobs are keyed by tenant and meeting
+ID to suppress duplicate meeting-end events. By default, the worker polls every
+15 seconds for up to five minutes. Transcript cards are capped at 20,000
+characters while the complete transcript remains in the stored source document.
+
+## Test
+
+```bash
+dotnet test tests/BotMeetings.Tests/BotMeetings.Tests.csproj -c Release
+```
 
 ## Source
 

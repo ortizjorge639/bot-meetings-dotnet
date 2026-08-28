@@ -12,4 +12,8 @@
     <PackageReference Include="Microsoft.Teams.Plugins.AspNetCore" Version="2.0.8" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="tests\**\*.cs" />
+  </ItemGroup>
+
 </Project>
