@@ -5,7 +5,7 @@ using Microsoft.Extensions.Options;
 
 namespace BotMeetings.TranscriptIngestion;
 
-public sealed class FileTranscriptStore : ITranscriptIngestionStore, ISourceDocumentSink
+public sealed class FileTranscriptStore : ITranscriptIngestionStore, ISourceDocumentSink, ISourceDocumentStore
 {
     private readonly string jobsPath;
     private readonly string documentsPath;
@@ -105,6 +105,40 @@ public sealed class FileTranscriptStore : ITranscriptIngestionStore, ISourceDocu
         {
             gate.Release();
         }
+    }
+
+    public async Task<SourceDocument?> GetLatestCompletedAsync(
+        string tenantId,
+        string conversationId,
+        CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(jobsPath)) return null;
+
+        TranscriptIngestionJob? latest = null;
+        foreach (var path in Directory.EnumerateFiles(jobsPath, "*.json"))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var job = await ReadJobAsync(path, cancellationToken);
+            if (job.Status != TranscriptIngestionStatus.Completed ||
+                string.IsNullOrWhiteSpace(job.DocumentId) ||
+                !string.Equals(job.Request.TenantId, tenantId, StringComparison.Ordinal) ||
+                !string.Equals(job.Request.ConversationId, conversationId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (latest is null || job.Request.MeetingEndedAt > latest.Request.MeetingEndedAt) latest = job;
+        }
+
+        if (latest?.DocumentId is not { } documentId) return null;
+        var documentPath = Path.Combine(documentsPath, $"{Hash(documentId)}.json");
+        if (!File.Exists(documentPath)) return null;
+
+        await using var stream = File.OpenRead(documentPath);
+        return await JsonSerializer.DeserializeAsync(
+            stream,
+            TranscriptJsonSerializerContext.Default.SourceDocument,
+            cancellationToken);
     }
 
     private string GetJobPath(string tenantId, string meetingId) =>

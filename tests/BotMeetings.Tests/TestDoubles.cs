@@ -60,6 +60,23 @@ internal sealed class RecordingSink : ISourceDocumentSink
     }
 }
 
+internal sealed class StubSourceDocumentStore : ISourceDocumentStore
+{
+    public SourceDocument? Document { get; set; }
+    public string? RequestedTenantId { get; private set; }
+    public string? RequestedConversationId { get; private set; }
+
+    public Task<SourceDocument?> GetLatestCompletedAsync(
+        string tenantId,
+        string conversationId,
+        CancellationToken cancellationToken)
+    {
+        RequestedTenantId = tenantId;
+        RequestedConversationId = conversationId;
+        return Task.FromResult(Document);
+    }
+}
+
 internal sealed class RecordingNotificationSink : ITranscriptNotificationSink
 {
     public int CompletedCount { get; private set; }

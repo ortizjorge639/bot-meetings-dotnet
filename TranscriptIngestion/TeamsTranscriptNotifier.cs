@@ -34,6 +34,11 @@ public sealed class TeamsTranscriptNotifier(IOptions<TranscriptIngestionOptions>
                 IsSubtle = true
             });
         }
+        body.Add(new TextBlock("I'm ready for questions about this meeting. Ask me in this meeting chat and I'll answer from the transcript with speaker and timestamp citations.")
+        {
+            Wrap = true,
+            Weight = TextWeight.Bolder
+        });
 
         return SendAsync(request.ConversationId, new AdaptiveCard
         {
