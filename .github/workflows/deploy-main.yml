@@ -1,0 +1,78 @@
+name: Deploy main to Azure App Service
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+env:
+  AZURE_WEBAPP_NAME: bot-meeting-plan
+  AZURE_WEBAPP_URL: https://bot-meeting-plan-d3htfcbtevfphuf3.centralus-01.azurewebsites.net
+  DOTNET_VERSION: 10.0.x
+
+jobs:
+  build-test-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ env.AZURE_WEBAPP_URL }}/meeting
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore tests/BotMeetings.Tests/BotMeetings.Tests.csproj
+
+      - name: Test
+        run: dotnet test tests/BotMeetings.Tests/BotMeetings.Tests.csproj --configuration Release --no-restore
+
+      - name: Publish
+        run: dotnet publish BotMeetings.csproj --configuration Release --no-restore --output publish
+
+      - name: Sign in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          package: publish
+
+      - name: Verify deployment
+        shell: bash
+        run: |
+          meeting_body="$(mktemp)"
+
+          curl --fail --silent --show-error \
+            --retry 12 --retry-delay 5 --retry-all-errors \
+            --max-time 180 \
+            --output "$meeting_body" \
+            "$AZURE_WEBAPP_URL/meeting"
+
+          grep --fixed-strings --quiet "Bot Meetings" "$meeting_body"
+          grep --fixed-strings --quiet "connected to the meeting" "$meeting_body"
+
+          messages_status="$(curl --silent --show-error \
+            --output /dev/null --write-out '%{http_code}' \
+            --max-time 30 \
+            "$AZURE_WEBAPP_URL/api/messages")"
+
+          test "$messages_status" = "405"
