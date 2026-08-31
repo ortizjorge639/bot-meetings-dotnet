@@ -1,0 +1,37 @@
+name: Validate pull request
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_VERSION: 10.0.x
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore tests/BotMeetings.Tests/BotMeetings.Tests.csproj
+
+      - name: Check formatting
+        run: dotnet format BotMeetings.csproj --verify-no-changes --no-restore
+
+      - name: Test
+        run: dotnet test tests/BotMeetings.Tests/BotMeetings.Tests.csproj --configuration Release --no-restore
+
+      - name: Publish
+        run: dotnet publish BotMeetings.csproj --configuration Release --no-restore --output publish

@@ -20,6 +20,14 @@ public interface ISourceDocumentSink
     Task UpsertAsync(SourceDocument document, CancellationToken cancellationToken);
 }
 
+public interface ISourceDocumentStore
+{
+    Task<SourceDocument?> GetLatestCompletedAsync(
+        string tenantId,
+        string conversationId,
+        CancellationToken cancellationToken);
+}
+
 public interface ITranscriptNotificationSink
 {
     Task NotifyCompletedAsync(

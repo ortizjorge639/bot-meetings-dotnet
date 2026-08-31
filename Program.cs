@@ -3,6 +3,7 @@
 
 using Azure.Identity;
 using BotMeetings.TranscriptIngestion;
+using BotMeetings.TranscriptQna;
 using Microsoft.Graph;
 using Microsoft.Teams.Plugins.AspNetCore.Extensions;
 using Microsoft.Teams.Apps;
@@ -30,6 +31,8 @@ builder.Services.AddSingleton<ITranscriptIngestionStore>(
     services => services.GetRequiredService<FileTranscriptStore>());
 builder.Services.AddSingleton<ISourceDocumentSink>(
     services => services.GetRequiredService<FileTranscriptStore>());
+builder.Services.AddSingleton<ISourceDocumentStore>(
+    services => services.GetRequiredService<FileTranscriptStore>());
 builder.Services.AddSingleton<TeamsTranscriptNotifier>();
 builder.Services.AddSingleton<ITranscriptNotificationSink>(
     services => services.GetRequiredService<TeamsTranscriptNotifier>());
@@ -41,6 +44,14 @@ builder.Services.AddSingleton(new GraphServiceClient(
 builder.Services.AddSingleton<ITranscriptProvider, GraphTranscriptProvider>();
 builder.Services.AddSingleton<TranscriptIngestionProcessor>();
 builder.Services.AddHostedService<TranscriptIngestionWorker>();
+builder.Services
+    .AddOptions<TranscriptAgentOptions>()
+    .Bind(builder.Configuration.GetSection(TranscriptAgentOptions.SectionName))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
+builder.Services.AddSingleton<TranscriptContextSelector>();
+builder.Services.AddSingleton<ITranscriptAnswerGenerator, AgentFrameworkTranscriptAnswerGenerator>();
+builder.Services.AddSingleton<TranscriptQuestionAnsweringService>();
 
 var webApp = builder.Build();
 var teamsApp = webApp.UseTeams(true);
@@ -162,6 +173,30 @@ teamsApp.OnMeetingLeave(async (context, cancellationToken) =>
     };
 
     await context.Send(card);
+});
+
+// Answer only from the latest completed transcript scoped to this Teams meeting chat.
+teamsApp.OnMessage(async (context, cancellationToken) =>
+{
+    var question = context.Activity.Text?.Trim();
+    if (string.IsNullOrWhiteSpace(question)) return;
+
+    await context.Typing(cancellationToken: cancellationToken);
+    try
+    {
+        var service = webApp.Services.GetRequiredService<TranscriptQuestionAnsweringService>();
+        var result = await service.AnswerAsync(
+            context.Activity.Conversation.TenantId ?? tenantId,
+            context.Activity.Conversation.Id,
+            question,
+            cancellationToken);
+        await context.Send(result.Message, cancellationToken);
+    }
+    catch (Exception exception) when (exception is not OperationCanceledException)
+    {
+        webApp.Logger.LogError(exception, "Transcript Q&A failed for conversation {ConversationId}", context.Activity.Conversation.Id);
+        await context.Send("I couldn't answer from the transcript right now. Please try again in a moment.", cancellationToken);
+    }
 });
 
 // Starts the Teams bot application and listens for incoming requests
