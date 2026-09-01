@@ -85,8 +85,49 @@ public sealed class FileTranscriptStore : ITranscriptIngestionStore, ISourceDocu
         string meetingId,
         CancellationToken cancellationToken)
     {
-        var path = GetJobPath(tenantId, meetingId);
-        return File.Exists(path) ? await ReadJobAsync(path, cancellationToken) : null;
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var path = GetJobPath(tenantId, meetingId);
+            return File.Exists(path) ? await ReadJobAsync(path, cancellationToken) : null;
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public async Task<int> PurgeExpiredAsync(DateTimeOffset cutoff, CancellationToken cancellationToken)
+    {
+        if (!Directory.Exists(jobsPath)) return 0;
+
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var purged = 0;
+            foreach (var path in Directory.EnumerateFiles(jobsPath, "*.json"))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var job = await ReadJobAsync(path, cancellationToken);
+                var retentionTimestamp = job.CompletedAt ?? job.CreatedAt;
+                if (retentionTimestamp >= cutoff) continue;
+
+                if (!string.IsNullOrWhiteSpace(job.DocumentId))
+                {
+                    var documentPath = Path.Combine(documentsPath, $"{Hash(job.DocumentId)}.json");
+                    File.Delete(documentPath);
+                }
+
+                File.Delete(path);
+                purged++;
+            }
+
+            return purged;
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     public async Task UpsertAsync(SourceDocument document, CancellationToken cancellationToken)
@@ -112,33 +153,41 @@ public sealed class FileTranscriptStore : ITranscriptIngestionStore, ISourceDocu
         string conversationId,
         CancellationToken cancellationToken)
     {
-        if (!Directory.Exists(jobsPath)) return null;
-
-        TranscriptIngestionJob? latest = null;
-        foreach (var path in Directory.EnumerateFiles(jobsPath, "*.json"))
+        await gate.WaitAsync(cancellationToken);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var job = await ReadJobAsync(path, cancellationToken);
-            if (job.Status != TranscriptIngestionStatus.Completed ||
-                string.IsNullOrWhiteSpace(job.DocumentId) ||
-                !string.Equals(job.Request.TenantId, tenantId, StringComparison.Ordinal) ||
-                !string.Equals(job.Request.ConversationId, conversationId, StringComparison.Ordinal))
+            if (!Directory.Exists(jobsPath)) return null;
+
+            TranscriptIngestionJob? latest = null;
+            foreach (var path in Directory.EnumerateFiles(jobsPath, "*.json"))
             {
-                continue;
+                cancellationToken.ThrowIfCancellationRequested();
+                var job = await ReadJobAsync(path, cancellationToken);
+                if (job.Status != TranscriptIngestionStatus.Completed ||
+                    string.IsNullOrWhiteSpace(job.DocumentId) ||
+                    !string.Equals(job.Request.TenantId, tenantId, StringComparison.Ordinal) ||
+                    !string.Equals(job.Request.ConversationId, conversationId, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (latest is null || job.Request.MeetingEndedAt > latest.Request.MeetingEndedAt) latest = job;
             }
 
-            if (latest is null || job.Request.MeetingEndedAt > latest.Request.MeetingEndedAt) latest = job;
+            if (latest?.DocumentId is not { } documentId) return null;
+            var documentPath = Path.Combine(documentsPath, $"{Hash(documentId)}.json");
+            if (!File.Exists(documentPath)) return null;
+
+            await using var stream = File.OpenRead(documentPath);
+            return await JsonSerializer.DeserializeAsync(
+                stream,
+                TranscriptJsonSerializerContext.Default.SourceDocument,
+                cancellationToken);
         }
-
-        if (latest?.DocumentId is not { } documentId) return null;
-        var documentPath = Path.Combine(documentsPath, $"{Hash(documentId)}.json");
-        if (!File.Exists(documentPath)) return null;
-
-        await using var stream = File.OpenRead(documentPath);
-        return await JsonSerializer.DeserializeAsync(
-            stream,
-            TranscriptJsonSerializerContext.Default.SourceDocument,
-            cancellationToken);
+        finally
+        {
+            gate.Release();
+        }
     }
 
     private string GetJobPath(string tenantId, string meetingId) =>

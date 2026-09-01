@@ -13,6 +13,7 @@ public interface ITranscriptIngestionStore
     Task<IReadOnlyList<TranscriptIngestionJob>> GetDueJobsAsync(DateTimeOffset now, CancellationToken cancellationToken);
     Task UpdateAsync(TranscriptIngestionJob job, CancellationToken cancellationToken);
     Task<TranscriptIngestionJob?> GetAsync(string tenantId, string meetingId, CancellationToken cancellationToken);
+    Task<int> PurgeExpiredAsync(DateTimeOffset cutoff, CancellationToken cancellationToken);
 }
 
 public interface ISourceDocumentSink
