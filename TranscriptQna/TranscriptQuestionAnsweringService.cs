@@ -51,11 +51,28 @@ public sealed partial class TranscriptQuestionAnsweringService(
         }
 
         var sources = chunks.Select((chunk, index) => new GroundingSource($"S{index + 1}", chunk)).ToArray();
-        await answerGate.WaitAsync(cancellationToken);
+        if (!await answerGate.WaitAsync(options.Value.QueueWaitTimeout, cancellationToken))
+        {
+            return new TranscriptAnswerResult(
+                "I'm handling the maximum number of questions right now. Please try again in a moment.",
+                []);
+        }
+
         string answer;
         try
         {
-            answer = await generator.GenerateAsync(question, sources, cancellationToken);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(options.Value.AnswerTimeout);
+            try
+            {
+                answer = await generator.GenerateAsync(question, sources, timeout.Token);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                return new TranscriptAnswerResult(
+                    "The transcript answer timed out. Please try a more specific question.",
+                    []);
+            }
         }
         finally
         {

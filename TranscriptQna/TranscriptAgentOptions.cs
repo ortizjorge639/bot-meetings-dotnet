@@ -20,4 +20,10 @@ public sealed class TranscriptAgentOptions
 
     [Range(1, 32)]
     public int MaximumConcurrentAnswers { get; init; } = 2;
+
+    [Range(typeof(TimeSpan), "00:00:01", "00:05:00")]
+    public TimeSpan QueueWaitTimeout { get; init; } = TimeSpan.FromSeconds(5);
+
+    [Range(typeof(TimeSpan), "00:00:01", "00:10:00")]
+    public TimeSpan AnswerTimeout { get; init; } = TimeSpan.FromMinutes(2);
 }
