@@ -5,6 +5,30 @@ This .NET 10 sample listens for Microsoft Teams meeting events, retrieves the me
 > [!CAUTION]
 > **Preview, not production-ready.** Transcript jobs and documents are JSON files on one App Service instance. The store has process-local locking and retention cleanup, but no distributed leases, transactions, encryption key isolation, legal hold, user deletion workflow, or multi-instance consistency. Keep App Service at one instance and use only non-sensitive test meetings until the production gaps are addressed.
 
+## Documentation index
+
+### Start here
+
+| Goal | Guide |
+| --- | --- |
+| Understand the solution and deploy a preview | [Architecture](#architecture) and [15-minute developer quickstart](#15-minute-developer-quickstart) |
+| Configure Entra, Microsoft Graph, Teams policies, and Azure Bot | [Tenant and Teams administrator setup](docs/tenant-admin-setup.md) |
+| Build the Teams package and publish it to the organization catalog | [Organization publishing and end-to-end test plan](docs/publish-and-test.md) |
+| Plan monitoring, retention, privacy, security, and production hardening | [Operations, privacy, and production readiness](docs/operations-and-production.md) |
+| Review license and dependency notice responsibilities | [MIT License](LICENSE) and [Third-party notices](THIRD-PARTY-NOTICES.md) |
+
+### README navigation
+
+- [What is included](#what-is-included)
+- [Architecture](#architecture)
+- [15-minute developer quickstart](#15-minute-developer-quickstart)
+- [Local development](#local-development)
+- [Configuration](#configuration)
+- [Security and data handling](#security-and-data-handling)
+- [Troubleshooting](#troubleshooting)
+- [Validation](#validation)
+- [Licensing and attribution](#licensing-and-attribution)
+
 ## What is included
 
 - Meeting start, end, join, and leave handlers.
@@ -199,8 +223,5 @@ az bicep build --file infra/main.bicep
 
 The repository is licensed under the [MIT License](LICENSE) and is based on Microsoft's [Bot Meetings Teams SDK sample](https://github.com/OfficeDev/Microsoft-Teams-Samples/tree/main/samples/TeamsSDK/bot-meetings/dotnet/bot-meetings). NuGet and GitHub Actions dependencies retain their own licenses. Review [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and regenerate the dependency inventory before every release.
 
-## Reference documentation
+[Back to documentation index](#documentation-index)
 
-- [Tenant and Teams administrator setup](docs/tenant-admin-setup.md)
-- [Organization publishing and end-to-end test plan](docs/publish-and-test.md)
-- [Operations, privacy, and production readiness](docs/operations-and-production.md)
