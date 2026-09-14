@@ -35,6 +35,17 @@ public sealed class TranscriptQnaTests : IDisposable
     }
 
     [Fact]
+    public void Selector_returns_no_context_when_small_transcript_has_no_relevant_terms()
+    {
+        var document = CreateDocument(
+            new SourceChunk("chunk-0", 0, TimeSpan.Zero, TimeSpan.FromSeconds(4), ["Jane"], "Jane: Welcome everyone."));
+
+        var selected = new TranscriptContextSelector().Select(document, "quasar nebula", 50);
+
+        Assert.Empty(selected);
+    }
+
+    [Fact]
     public async Task Service_returns_waiting_notice_without_completed_transcript()
     {
         var store = new StubSourceDocumentStore();
@@ -79,6 +90,54 @@ public sealed class TranscriptQnaTests : IDisposable
         Assert.Contains("Jane said to ship Friday [S1].", result.Message);
         Assert.Contains("[S1] Jane — 00:01:05–00:01:10", result.Message);
         Assert.Equal(["S1"], result.Citations);
+    }
+
+    [Fact]
+    public async Task Service_times_out_slow_model_answers()
+    {
+        var store = new StubSourceDocumentStore
+        {
+            Document = CreateDocument(
+                new SourceChunk("chunk-0", 0, TimeSpan.Zero, TimeSpan.FromSeconds(2), ["Jane"], "Jane: Approved."))
+        };
+        var service = CreateService(
+            store,
+            new NeverCompletingAnswerGenerator(),
+            answerTimeout: TimeSpan.FromMilliseconds(25));
+
+        var result = await service.AnswerAsync("tenant-a", "conversation-a", "Was it approved?", CancellationToken.None);
+
+        Assert.Contains("timed out", result.Message);
+        Assert.Empty(result.Citations);
+    }
+
+    [Fact]
+    public async Task Service_rejects_excess_work_instead_of_waiting_without_bound()
+    {
+        var store = new StubSourceDocumentStore
+        {
+            Document = CreateDocument(
+                new SourceChunk("chunk-0", 0, TimeSpan.Zero, TimeSpan.FromSeconds(2), ["Jane"], "Jane: Approved."))
+        };
+        var generator = new BlockingAnswerGenerator();
+        var service = CreateService(
+            store,
+            generator,
+            maximumConcurrentAnswers: 1,
+            queueWaitTimeout: TimeSpan.FromMilliseconds(25));
+        var firstAnswer = service.AnswerAsync("tenant-a", "conversation-a", "Was it approved?", CancellationToken.None);
+        await generator.Started.Task.WaitAsync(TimeSpan.FromSeconds(1));
+
+        var secondAnswer = await service.AnswerAsync(
+            "tenant-a",
+            "conversation-a",
+            "Was it approved?",
+            CancellationToken.None);
+        generator.Release.SetResult();
+        await firstAnswer;
+
+        Assert.Contains("maximum number of questions", secondAnswer.Message);
+        Assert.Empty(secondAnswer.Citations);
     }
 
     [Theory]
@@ -129,6 +188,23 @@ public sealed class TranscriptQnaTests : IDisposable
         Assert.Null(await store.GetLatestCompletedAsync("tenant-a", "conversation-b", CancellationToken.None));
     }
 
+    [Fact]
+    public async Task File_store_purges_expired_jobs_and_documents()
+    {
+        var store = CreateFileStore();
+        var document = CreateDocument(
+            new SourceChunk("chunk-0", 0, TimeSpan.Zero, TimeSpan.FromSeconds(2), ["Jane"], "Jane: Approved."));
+        await PersistCompletedAsync(store, document, "conversation-a");
+
+        var purged = await store.PurgeExpiredAsync(
+            document.MeetingEndedAt.AddDays(1),
+            CancellationToken.None);
+
+        Assert.Equal(1, purged);
+        Assert.Null(await store.GetAsync(document.TenantId, document.MeetingId, CancellationToken.None));
+        Assert.Null(await store.GetLatestCompletedAsync(document.TenantId, "conversation-a", CancellationToken.None));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(temporaryPath)) Directory.Delete(temporaryPath, true);
@@ -136,14 +212,19 @@ public sealed class TranscriptQnaTests : IDisposable
 
     private TranscriptQuestionAnsweringService CreateService(
         ISourceDocumentStore store,
-        ITranscriptAnswerGenerator generator) =>
+        ITranscriptAnswerGenerator generator,
+        int maximumConcurrentAnswers = 2,
+        TimeSpan? queueWaitTimeout = null,
+        TimeSpan? answerTimeout = null) =>
         new(store, new TranscriptContextSelector(), generator, Options.Create(new TranscriptAgentOptions
         {
             Endpoint = "https://example.openai.azure.com",
             DeploymentName = "test",
             MaximumContextChunks = 2,
             MaximumQuestionCharacters = 1000,
-            MaximumConcurrentAnswers = 2
+            MaximumConcurrentAnswers = maximumConcurrentAnswers,
+            QueueWaitTimeout = queueWaitTimeout ?? TimeSpan.FromSeconds(5),
+            AnswerTimeout = answerTimeout ?? TimeSpan.FromMinutes(2)
         }));
 
     private FileTranscriptStore CreateFileStore() =>
@@ -202,6 +283,34 @@ public sealed class TranscriptQnaTests : IDisposable
         {
             CallCount++;
             return Task.FromResult(answer);
+        }
+    }
+
+    private sealed class NeverCompletingAnswerGenerator : ITranscriptAnswerGenerator
+    {
+        public async Task<string> GenerateAsync(
+            string question,
+            IReadOnlyList<GroundingSource> sources,
+            CancellationToken cancellationToken)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return string.Empty;
+        }
+    }
+
+    private sealed class BlockingAnswerGenerator : ITranscriptAnswerGenerator
+    {
+        public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<string> GenerateAsync(
+            string question,
+            IReadOnlyList<GroundingSource> sources,
+            CancellationToken cancellationToken)
+        {
+            Started.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
+            return "Jane approved it [S1].";
         }
     }
 

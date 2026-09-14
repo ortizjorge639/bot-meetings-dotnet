@@ -1,0 +1,11 @@
+using './main.bicep'
+
+param namePrefix = 'meeting-copilot-dev'
+param location = 'centralus'
+param tenantId = '<tenant-guid>'
+param botClientId = '<application-client-id>'
+param botClientSecret = '<client-secret-value>'
+param modelDeploymentName = 'gpt-4.1-mini'
+param modelVersion = '2025-04-14'
+param modelCapacity = 50
+param transcriptRetention = '30.00:00:00'

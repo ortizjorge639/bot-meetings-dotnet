@@ -48,6 +48,8 @@ internal sealed class RecordingStore : ITranscriptIngestionStore
     }
     public Task<TranscriptIngestionJob?> GetAsync(string tenantId, string meetingId, CancellationToken cancellationToken) =>
         Task.FromResult<TranscriptIngestionJob?>(null);
+    public Task<int> PurgeExpiredAsync(DateTimeOffset cutoff, CancellationToken cancellationToken) =>
+        Task.FromResult(0);
 }
 
 internal sealed class RecordingSink : ISourceDocumentSink

@@ -25,7 +25,15 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore
-        run: dotnet restore tests/BotMeetings.Tests/BotMeetings.Tests.csproj
+        run: dotnet restore tests/BotMeetings.Tests/BotMeetings.Tests.csproj --locked-mode
+
+      - name: Audit vulnerable packages
+        shell: pwsh
+        run: |
+          dotnet list BotMeetings.csproj package --vulnerable --include-transitive | Tee-Object vulnerable-packages.txt
+          if (Select-String -Path vulnerable-packages.txt -SimpleMatch "has the following vulnerable packages") {
+            throw "The dependency graph contains known vulnerable packages."
+          }
 
       - name: Check formatting
         run: dotnet format BotMeetings.csproj --verify-no-changes --no-restore
@@ -35,3 +43,22 @@ jobs:
 
       - name: Publish
         run: dotnet publish BotMeetings.csproj --configuration Release --no-restore --output publish
+
+      - name: Validate Bicep
+        uses: azure/CLI@v2
+        with:
+          inlineScript: az bicep build --file infra/main.bicep --stdout > /dev/null
+
+      - name: Exercise Teams package builder
+        shell: pwsh
+        run: |
+          ./infra/build-app-package.ps1 `
+            -TeamsAppId 11111111-1111-1111-1111-111111111111 `
+            -BotAppId 22222222-2222-2222-2222-222222222222 `
+            -WebAppUrl https://meeting-copilot.example.com `
+            -DeveloperName "Validation" `
+            -DeveloperWebsite https://example.com `
+            -PrivacyUrl https://example.com/privacy `
+            -TermsUrl https://example.com/terms `
+            -OutputPath appPackage/build/validation.zip
+          if (-not (Test-Path appPackage/build/validation.zip)) { throw "Package was not created." }

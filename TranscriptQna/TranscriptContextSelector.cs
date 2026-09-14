@@ -33,7 +33,7 @@ public sealed partial class TranscriptContextSelector
             .OrderByDescending(item => item.Score)
             .ThenBy(item => item.Chunk.Index)
             .ToArray();
-        if (scored.Length > maximumChunks && scored.All(item => item.Score == 0)) return [];
+        if (scored.Length == 0 || scored.All(item => item.Score == 0)) return [];
 
         var ranked = scored
             .Take(maximumChunks)

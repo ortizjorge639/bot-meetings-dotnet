@@ -10,6 +10,7 @@ using Microsoft.Teams.Apps;
 using Microsoft.Teams.Apps.Activities;
 using Microsoft.Teams.Apps.Activities.Events;
 using Microsoft.Teams.Cards;
+using System.Reflection;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -73,14 +74,20 @@ static string GetRequiredConfigurationValue(IConfiguration configuration, string
     return value;
 }
 
+static bool IsExpectedTenant(string? activityTenantId, string configuredTenantId) =>
+    !string.IsNullOrWhiteSpace(activityTenantId) &&
+    string.Equals(activityTenantId, configuredTenantId, StringComparison.OrdinalIgnoreCase);
+
 // Register meeting participant join handler
 teamsApp.OnMeetingJoin(async (context, cancellationToken) =>
 {
+    if (!IsExpectedTenant(context.Activity.Conversation.TenantId, tenantId)) return;
     var activity = context.Activity.Value;
-    if (string.IsNullOrEmpty(activity.Members[0].User?.AadObjectId)) return;
+    var participant = activity.Members?.FirstOrDefault();
+    if (string.IsNullOrEmpty(participant?.User?.AadObjectId)) return;
 
-    var member = activity.Members[0].User.Name;
-    var role = activity.Members[0].Meeting?.Role ?? "a participant";
+    var member = participant.User.Name;
+    var role = participant.Meeting?.Role ?? "a participant";
 
     var card = new AdaptiveCard
     {
@@ -101,6 +108,7 @@ teamsApp.OnMeetingJoin(async (context, cancellationToken) =>
 // Register meeting start handler
 teamsApp.OnMeetingStart(async (context, cancellationToken) =>
 {
+    if (!IsExpectedTenant(context.Activity.Conversation.TenantId, tenantId)) return;
     var activity = context.Activity.Value;
 
     var card = new AdaptiveCard
@@ -138,6 +146,7 @@ teamsApp.OnMeetingStart(async (context, cancellationToken) =>
 // Queue transcript work and return the meeting webhook without waiting for Graph publication.
 teamsApp.OnMeetingEnd(async (context, cancellationToken) =>
 {
+    if (!IsExpectedTenant(context.Activity.Conversation.TenantId, tenantId)) return;
     var activity = context.Activity.Value;
     var meetingInfo = await context.Api.Meetings.GetByIdAsync(activity.Id, cancellationToken);
     var request = new TranscriptIngestionRequest(
@@ -156,8 +165,10 @@ teamsApp.OnMeetingEnd(async (context, cancellationToken) =>
 // Register meeting participant leave handler
 teamsApp.OnMeetingLeave(async (context, cancellationToken) =>
 {
+    if (!IsExpectedTenant(context.Activity.Conversation.TenantId, tenantId)) return;
     var activity = context.Activity.Value;
-    var member = activity.Members[0].User.Name;
+    var member = activity.Members?.FirstOrDefault()?.User?.Name;
+    if (string.IsNullOrWhiteSpace(member)) return;
 
     var card = new AdaptiveCard
     {
@@ -178,6 +189,12 @@ teamsApp.OnMeetingLeave(async (context, cancellationToken) =>
 // Answer only from the latest completed transcript scoped to this Teams meeting chat.
 teamsApp.OnMessage(async (context, cancellationToken) =>
 {
+    if (!IsExpectedTenant(context.Activity.Conversation.TenantId, tenantId))
+    {
+        webApp.Logger.LogWarning("Rejected a message from an unexpected or missing tenant.");
+        return;
+    }
+
     var question = context.Activity.Text?.Trim();
     if (string.IsNullOrWhiteSpace(question)) return;
 
@@ -209,5 +226,13 @@ webApp.MapGet("/meeting", () => Results.Content(
     </html>
     """,
     "text/html"));
+
+webApp.MapGet("/health/live", () => Results.Ok(new { status = "healthy" }));
+webApp.MapGet("/health/ready", () => Results.Ok(new { status = "ready" }));
+webApp.MapGet("/version", () => Results.Ok(new
+{
+    version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown",
+    commit = Environment.GetEnvironmentVariable("BUILD_COMMIT") ?? "unknown"
+}));
 
 webApp.Run();

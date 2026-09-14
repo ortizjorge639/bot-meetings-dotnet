@@ -16,6 +16,7 @@ concurrency:
 
 env:
   AZURE_WEBAPP_NAME: bot-meeting-plan
+  AZURE_RESOURCE_GROUP: bot-meeting-rg
   AZURE_WEBAPP_URL: https://bot-meeting-plan-d3htfcbtevfphuf3.centralus-01.azurewebsites.net
   DOTNET_VERSION: 10.0.x
 
@@ -35,7 +36,7 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore
-        run: dotnet restore tests/BotMeetings.Tests/BotMeetings.Tests.csproj
+        run: dotnet restore tests/BotMeetings.Tests/BotMeetings.Tests.csproj --locked-mode
 
       - name: Test
         run: dotnet test tests/BotMeetings.Tests/BotMeetings.Tests.csproj --configuration Release --no-restore
@@ -49,6 +50,14 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Record build provenance
+        run: |
+          az webapp config appsettings set \
+            --name "$AZURE_WEBAPP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --settings "BUILD_COMMIT=$GITHUB_SHA" \
+            --output none
 
       - name: Deploy
         uses: azure/webapps-deploy@v3
@@ -69,6 +78,19 @@ jobs:
 
           grep --fixed-strings --quiet "Bot Meetings" "$meeting_body"
           grep --fixed-strings --quiet "connected to the meeting" "$meeting_body"
+
+          curl --fail --silent --show-error \
+            --retry 12 --retry-delay 5 --retry-all-errors \
+            --max-time 180 \
+            "$AZURE_WEBAPP_URL/health/live" | grep --fixed-strings --quiet '"status":"healthy"'
+
+          curl --fail --silent --show-error \
+            --max-time 30 \
+            "$AZURE_WEBAPP_URL/health/ready" | grep --fixed-strings --quiet '"status":"ready"'
+
+          curl --fail --silent --show-error \
+            --max-time 30 \
+            "$AZURE_WEBAPP_URL/version" | grep --fixed-strings --quiet "$GITHUB_SHA"
 
           messages_status="$(curl --silent --show-error \
             --output /dev/null --write-out '%{http_code}' \
