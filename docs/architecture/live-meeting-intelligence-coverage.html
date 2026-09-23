@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Meeting Intelligence POC Coverage</title>
+  <style>
+    body {
+      max-width: 1100px;
+      margin: 40px auto;
+      padding: 0 20px 48px;
+      color: #222;
+      background: #fff;
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.5;
+    }
+    h1 { margin-bottom: 8px; }
+    h2 { margin-top: 40px; border-bottom: 1px solid #ccc; padding-bottom: 6px; }
+    h3 { margin: 0 0 6px; font-size: 1rem; }
+    p { max-width: 900px; }
+    .summary {
+      padding: 12px 16px;
+      border-left: 4px solid #333;
+      background: #f5f5f5;
+    }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(110px, 1fr));
+      gap: 8px;
+      margin: 20px 0;
+    }
+    .node {
+      min-height: 100px;
+      padding: 12px;
+      border: 1px solid #aaa;
+    }
+    .node p {
+      margin: 0;
+      color: #555;
+      font-size: 0.9rem;
+    }
+    .reuse { border-top: 5px solid #287a3b; }
+    .extend { border-top: 5px solid #a36a00; }
+    .create { border-top: 5px solid #9f2042; }
+    .legend { margin: 8px 0 24px; color: #555; }
+    .legend span { margin-right: 20px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 16px 0 28px;
+    }
+    th, td {
+      padding: 9px;
+      border: 1px solid #bbb;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #eee; }
+    code { font-family: Consolas, monospace; }
+    .two {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+    .box {
+      border: 1px solid #bbb;
+      padding: 16px;
+    }
+    .status {
+      white-space: nowrap;
+      font-weight: bold;
+    }
+    footer {
+      margin-top: 40px;
+      padding-top: 16px;
+      border-top: 1px solid #ccc;
+      color: #666;
+      font-size: 0.9rem;
+    }
+    @media (max-width: 850px) {
+      .flow { grid-template-columns: 1fr 1fr; }
+      .two { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 520px) {
+      .flow { grid-template-columns: 1fr; }
+      body { margin-top: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Meeting Intelligence POC Coverage</h1>
+  <p>Comparison of the current V1 POC, the next POC, and the initial solution intent.</p>
+
+  <p class="summary"><strong>Summary:</strong> V1 proved the Teams and post-meeting transcript path, including a deployed chat model that could answer from the completed transcript. It did not prove live spoken-content access, rolling context, scheduled summaries, retrieval, or question answering while context is still changing.</p>
+
+  <h2>Architecture flow</h2>
+  <div class="flow">
+    <div class="node reuse"><h3>Teams events</h3><p>Reuse start, end, join, and leave callbacks.</p></div>
+    <div class="node reuse"><h3>Meeting identity</h3><p>Reuse tenant, conversation, organizer, and Graph IDs.</p></div>
+    <div class="node create"><h3>Live utterances</h3><p>Create a supported live-text or audio-to-Speech path.</p></div>
+    <div class="node extend"><h3>Rolling state</h3><p>Extend transcript concepts into incremental context.</p></div>
+    <div class="node create"><h3>AI summaries</h3><p>Create 30-second rolling and 2-minute condensed summaries.</p></div>
+    <div class="node create"><h3>Grounded Q&amp;A</h3><p>Create retrieval, citations, and model answering.</p></div>
+    <div class="node reuse"><h3>Teams output</h3><p>Reuse proactive sending and extend card formats.</p></div>
+  </div>
+  <div class="legend">
+    <span><strong style="color:#287a3b">Green:</strong> reuse</span>
+    <span><strong style="color:#a36a00">Amber:</strong> extend</span>
+    <span><strong style="color:#9f2042">Red:</strong> create</span>
+  </div>
+
+  <h2>Initial intent compared with V1</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Initial intent</th>
+        <th>What V1 proved</th>
+        <th>What remains to prove</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>Connect to Teams meetings</td><td>Meeting lifecycle callbacks work.</td><td>Preserve behavior after services are separated.</td><td class="status">Reuse</td></tr>
+      <tr><td>Acquire meeting context</td><td>Official transcript is retrieved after meeting end.</td><td>Acquire spoken content while the meeting is active.</td><td class="status">Extend</td></tr>
+      <tr><td>Normalize transcripts</td><td>WebVTT parsing, speakers, timestamps, chunks, and hashes work.</td><td>Add incremental sequence-aware chunks.</td><td class="status">Reuse + extend</td></tr>
+      <tr><td>Rolling summaries</td><td>Not implemented.</td><td>Generate and post summaries every 30 seconds in POC testing.</td><td class="status">Create</td></tr>
+      <tr><td>Condensed summaries</td><td>Not implemented.</td><td>Generate a summary of summaries every 2 minutes in POC testing.</td><td class="status">Create</td></tr>
+      <tr><td>Transcript Q&amp;A</td><td>The deployed chat model answers from the completed transcript context.</td><td>Move from fixed post-meeting context to changing live context, retrieval, and citations.</td><td class="status">Reuse + extend</td></tr>
+      <tr><td>Post results to Teams</td><td>Proactive transcript cards work.</td><td>Generalize the notifier for summaries and answers.</td><td class="status">Reuse + extend</td></tr>
+      <tr><td>Editable Markdown instructions</td><td>No instruction repository.</td><td>Load versioned Markdown from private Blob Storage.</td><td class="status">Create</td></tr>
+      <tr><td>Durable scale-out</td><td>Single-process worker and file-backed storage.</td><td>Prove Service Bus, Durable Functions, and cloud state.</td><td class="status">Create</td></tr>
+      <tr><td>Final authoritative record</td><td>Official Graph transcript is retained.</td><td>Reconcile live content with the official transcript.</td><td class="status">Extend</td></tr>
+    </tbody>
+  </table>
+
+  <h2>What V1 proved</h2>
+  <div class="two">
+    <div class="box">
+      <h3>Proven</h3>
+      <ul>
+        <li>Teams bot hosting and endpoints</li>
+        <li>Meeting lifecycle events</li>
+        <li>Meeting and organizer identity</li>
+        <li>Post-meeting Microsoft Graph transcript retrieval</li>
+        <li>Retry of delayed transcript publication</li>
+        <li>WebVTT parsing and transcript chunking</li>
+        <li>File-backed POC persistence</li>
+        <li>Proactive Teams transcript output</li>
+        <li>Deployed chat-model integration</li>
+        <li>Answers grounded in a completed meeting transcript</li>
+      </ul>
+    </div>
+    <div class="box">
+      <h3>Not proven</h3>
+      <ul>
+        <li>Live spoken-content access</li>
+        <li>Model-generated summaries</li>
+        <li>Rolling meeting state</li>
+        <li>Q&amp;A from continuously changing live context</li>
+        <li>Semantic or vector retrieval</li>
+        <li>Distributed scheduling and scale-out</li>
+        <li>Editable Markdown instructions</li>
+        <li>Live-to-official transcript reconciliation</li>
+        <li>Quality, cost, latency, and operational targets</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Models to use</h2>
+  <table>
+    <thead><tr><th>Deployment</th><th>POC recommendation</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td>Existing V1 chat model</td><td>Reuse the deployed model and its current connection configuration</td><td>Rolling summaries, condensed summaries, extraction of decisions/actions, and grounded answers</td></tr>
+      <tr><td>Embeddings</td><td><code>text-embedding-3-small</code></td><td>Transcript and question vectors for Azure AI Search</td></tr>
+      <tr><td>Optional comparison</td><td><code>text-embedding-3-large</code> or another chat model</td><td>Provision only if evaluation shows the existing chat model or smaller embedding model is insufficient</td></tr>
+    </tbody>
+  </table>
+  <p>Azure AI Speech is a separate service, not another Foundry model deployment. Add it only if the selected live-content path supplies audio rather than usable live text.</p>
+
+  <h2>Additional Azure resources</h2>
+  <table>
+    <thead><tr><th>Resource</th><th>Purpose</th><th>POC timing</th></tr></thead>
+    <tbody>
+      <tr><td>Existing App Service</td><td>Teams bot and proactive output</td><td>Reuse now</td></tr>
+      <tr><td>Existing Foundry or Azure OpenAI resource</td><td>Reuse the V1 chat deployment and add embeddings if supported</td><td>Reuse + extend</td></tr>
+      <tr><td>Azure Functions + Durable Functions</td><td>Per-meeting timers and background activities</td><td>Next POC</td></tr>
+      <tr><td>Azure Storage</td><td>Functions state, artifacts, and Markdown instructions</td><td>Next POC</td></tr>
+      <tr><td>Cosmos DB</td><td>Rolling context and sequence watermarks</td><td>Next POC</td></tr>
+      <tr><td>Service Bus</td><td>Ordered and decoupled event delivery</td><td>Before scale-out validation</td></tr>
+      <tr><td>Azure AI Search</td><td>Grounded transcript retrieval</td><td>Q&amp;A phase</td></tr>
+      <tr><td>Application Insights</td><td>Cross-service tracing and model measurements</td><td>Next POC</td></tr>
+      <tr><td>Azure AI Speech</td><td>Streaming audio transcription</td><td>Only if required by live source</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Instruction publishing for this POC</h2>
+  <p>No custom administration UI is needed yet. Store versioned Markdown files in a private Blob Storage container and use Storage Explorer or the Azure portal to publish them. Record the instruction version on each generated result. Build a dedicated UI only if later evidence shows nontechnical publishing, approvals, or previews are required.</p>
+
+  <h2>Next proof sequence</h2>
+  <ol>
+    <li>Feed simulated utterances into rolling state.</li>
+    <li>Generate summaries every 30 seconds.</li>
+    <li>Generate condensed summaries every 2 minutes.</li>
+    <li>Post each result through the reused Teams notification path.</li>
+    <li>Add embeddings and search for grounded Q&amp;A.</li>
+    <li>Validate a supported source of live spoken content.</li>
+    <li>Reconcile live content with the official Graph transcript.</li>
+    <li>Use collected measurements to define targets and production intervals.</li>
+  </ol>
+
+  <footer>
+    The 30-second and 2-minute intervals are accelerated POC settings, not production commitments. No quality, latency, or cost targets have been selected yet.
+  </footer>
+</body>
+</html>

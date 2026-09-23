@@ -15,6 +15,8 @@ This .NET 10 sample listens for Microsoft Teams meeting events, retrieves the me
 | Configure Entra, Microsoft Graph, Teams policies, and Azure Bot | [Tenant and Teams administrator setup](docs/tenant-admin-setup.md) |
 | Build the Teams package and publish it to the organization catalog | [Organization publishing and end-to-end test plan](docs/publish-and-test.md) |
 | Plan monitoring, retention, privacy, security, and production hardening | [Operations, privacy, and production readiness](docs/operations-and-production.md) |
+| Review the proposed live meeting intelligence architecture | [Live meeting intelligence architecture plan](docs/architecture/live-meeting-intelligence-plan.md) |
+| Compare V1 coverage with the initial solution intent | [POC coverage view](docs/architecture/live-meeting-intelligence-coverage.html) |
 | Review license and dependency notice responsibilities | [MIT License](LICENSE) and [Third-party notices](THIRD-PARTY-NOTICES.md) |
 
 ### README navigation
@@ -38,6 +40,8 @@ This .NET 10 sample listens for Microsoft Teams meeting events, retrieves the me
 - Bounded model concurrency, queue wait, and answer timeout.
 - Configurable local-file retention cleanup.
 - Liveness, readiness, and build-version endpoints.
+- An on-demand `diagnose transcript` meeting-chat command that reports whether
+  Graph currently exposes transcript content without posting that content.
 - Bicep and PowerShell for a repeatable new-tenant preview deployment.
 - GitHub Actions validation and App Service deployment.
 
@@ -134,9 +138,12 @@ For development, in Teams select **Apps** > **Manage your apps** > **Upload an a
 
 1. Start and transcribe the meeting.
 2. Have at least two people speak so attribution can be checked.
-3. End the meeting and wait for the readiness message.
-4. Ask a question whose answer is explicit in the transcript.
-5. Verify the answer, source label, speaker, timestamp, and tenant/chat isolation.
+3. While the meeting is active, send `diagnose transcript` in the meeting chat.
+   The bot makes one Graph list/content attempt and reports the observed status
+   and content character count without posting transcript text.
+4. End the meeting and wait for the readiness message.
+5. Ask a question whose answer is explicit in the transcript.
+6. Verify the answer, source label, speaker, timestamp, and tenant/chat isolation.
 
 For organization-wide distribution, follow [Publish and validate in your organization](docs/publish-and-test.md).
 
@@ -224,4 +231,3 @@ az bicep build --file infra/main.bicep
 The repository is licensed under the [MIT License](LICENSE) and is based on Microsoft's [Bot Meetings Teams SDK sample](https://github.com/OfficeDev/Microsoft-Teams-Samples/tree/main/samples/TeamsSDK/bot-meetings/dotnet/bot-meetings). NuGet and GitHub Actions dependencies retain their own licenses. Review [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and regenerate the dependency inventory before every release.
 
 [Back to documentation index](#documentation-index)
-

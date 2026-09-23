@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using Azure.Identity;
+using BotMeetings.TranscriptDiagnostics;
 using BotMeetings.TranscriptIngestion;
 using BotMeetings.TranscriptQna;
 using Microsoft.Graph;
@@ -45,6 +46,9 @@ builder.Services.AddSingleton(new GraphServiceClient(
 builder.Services.AddSingleton<ITranscriptProvider, GraphTranscriptProvider>();
 builder.Services.AddSingleton<TranscriptIngestionProcessor>();
 builder.Services.AddHostedService<TranscriptIngestionWorker>();
+builder.Services.AddSingleton<ActiveMeetingStore>();
+builder.Services.AddSingleton<ITranscriptDiagnosticClient, GraphTranscriptDiagnosticClient>();
+builder.Services.AddSingleton<MeetingTranscriptDiagnosticService>();
 builder.Services
     .AddOptions<TranscriptAgentOptions>()
     .Bind(builder.Configuration.GetSection(TranscriptAgentOptions.SectionName))
@@ -110,6 +114,32 @@ teamsApp.OnMeetingStart(async (context, cancellationToken) =>
 {
     if (!IsExpectedTenant(context.Activity.Conversation.TenantId, tenantId)) return;
     var activity = context.Activity.Value;
+    try
+    {
+        var meetingInfo = await context.Api.Meetings.GetByIdAsync(activity.Id, cancellationToken);
+        var meetingResourceId = meetingInfo?.Details?.MSGraphResourceId;
+        var organizerUserId = meetingInfo?.Organizer?.AadObjectId;
+        if (!string.IsNullOrWhiteSpace(meetingResourceId) &&
+            !string.IsNullOrWhiteSpace(organizerUserId))
+        {
+            webApp.Services.GetRequiredService<ActiveMeetingStore>().Set(
+                context.Activity.Conversation.Id,
+                new ActiveMeetingTarget(meetingResourceId, organizerUserId));
+        }
+        else
+        {
+            webApp.Logger.LogWarning(
+                "The meeting-start event for {MeetingId} did not contain Graph meeting and organizer identifiers.",
+                activity.Id);
+        }
+    }
+    catch (Exception exception) when (exception is not OperationCanceledException)
+    {
+        webApp.Logger.LogError(
+            exception,
+            "Failed to capture Graph identifiers for meeting {MeetingId}.",
+            activity.Id);
+    }
 
     var card = new AdaptiveCard
     {
@@ -201,6 +231,14 @@ teamsApp.OnMessage(async (context, cancellationToken) =>
     await context.Typing(cancellationToken: cancellationToken);
     try
     {
+        if (question.Contains("diagnose transcript", StringComparison.OrdinalIgnoreCase))
+        {
+            var diagnostic = webApp.Services.GetRequiredService<MeetingTranscriptDiagnosticService>();
+            var message = await diagnostic.CheckAsync(context.Activity.Conversation.Id, cancellationToken);
+            await context.Send(message, cancellationToken);
+            return;
+        }
+
         var service = webApp.Services.GetRequiredService<TranscriptQuestionAnsweringService>();
         var result = await service.AnswerAsync(
             context.Activity.Conversation.TenantId ?? tenantId,
