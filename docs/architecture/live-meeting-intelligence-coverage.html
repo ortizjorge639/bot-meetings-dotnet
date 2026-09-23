@@ -93,6 +93,14 @@
 
   <p class="summary"><strong>Summary:</strong> V1 proved the Teams and post-meeting transcript path, including a deployed chat model that could answer from the completed transcript. It did not prove live spoken-content access, rolling context, scheduled summaries, retrieval, or question answering while context is still changing.</p>
 
+  <h2>Observed mid-meeting Graph result</h2>
+  <div class="box">
+    <p><strong>Tested September 23, 2026 at 20:21:41 UTC.</strong></p>
+    <p><code>GET /transcripts</code> returned <code>200 OK</code> with an empty collection while the transcribed meeting was active.</p>
+    <p><strong>Conclusion for the tested meeting:</strong> Graph exposed no transcript resource, transcript ID, or VTT content that could be supplied to the agent during the meeting.</p>
+    <p>This is empirical evidence for the tested tenant and meeting. It is not a guaranteed mid-meeting response contract. Microsoft documents transcript retrieval as a post-meeting capability.</p>
+  </div>
+
   <h2>Architecture flow</h2>
   <div class="flow">
     <div class="node reuse"><h3>Teams events</h3><p>Reuse start, end, join, and leave callbacks.</p></div>
@@ -121,7 +129,7 @@
     </thead>
     <tbody>
       <tr><td>Connect to Teams meetings</td><td>Meeting lifecycle callbacks work.</td><td>Preserve behavior after services are separated.</td><td class="status">Reuse</td></tr>
-      <tr><td>Acquire meeting context</td><td>Official transcript is retrieved after meeting end.</td><td>Acquire spoken content while the meeting is active.</td><td class="status">Extend</td></tr>
+      <tr><td>Acquire meeting context</td><td>Official transcript is retrieved after meeting end. A live test returned 200 with an empty transcript collection.</td><td>Acquire spoken content through a separately supported live source.</td><td class="status">Extend</td></tr>
       <tr><td>Normalize transcripts</td><td>WebVTT parsing, speakers, timestamps, chunks, and hashes work.</td><td>Add incremental sequence-aware chunks.</td><td class="status">Reuse + extend</td></tr>
       <tr><td>Rolling summaries</td><td>Not implemented.</td><td>Generate and post summaries every 30 seconds in POC testing.</td><td class="status">Create</td></tr>
       <tr><td>Condensed summaries</td><td>Not implemented.</td><td>Generate a summary of summaries every 2 minutes in POC testing.</td><td class="status">Create</td></tr>
@@ -153,7 +161,7 @@
     <div class="box">
       <h3>Not proven</h3>
       <ul>
-        <li>Live spoken-content access</li>
+        <li>A supported non-Graph source for live spoken content</li>
         <li>Model-generated summaries</li>
         <li>Rolling meeting state</li>
         <li>Q&amp;A from continuously changing live context</li>

@@ -64,7 +64,7 @@ V1 proved the outer Teams and post-meeting transcript loop:
 
 V1 did **not** prove:
 
-- Access to spoken words while the meeting is still active.
+- A supported source that exposes spoken words while the meeting is active.
 - Rolling context mutation.
 - Rolling or condensed summaries.
 - Question answering from context that changes while the meeting is active.
@@ -79,6 +79,38 @@ transcript-to-model interaction. The remaining work changes the timing and
 state model from one completed transcript to continuously changing meeting
 context. This is a larger change than simply calling the existing model more
 often.
+
+## Mid-meeting Graph transcript experiment
+
+On September 23, 2026, the deployed POC performed one on-demand Microsoft Graph
+transcript check while a transcribed Teams meeting was still active.
+
+Observed response:
+
+```text
+Graph check at 2026-09-23T20:21:41.4837405+00:00:
+GET /transcripts returned 200 OK with an empty collection.
+No transcript context is available through Graph right now.
+```
+
+This proves the following for the tested tenant, meeting type, application
+permissions, and point in time:
+
+- The Graph request was authenticated and accepted.
+- The online meeting was addressable with the captured organizer and Graph
+  meeting identifiers.
+- Graph exposed zero transcript resources while that meeting was active.
+- The application therefore had no transcript ID or VTT content to provide to
+  the chat model during the meeting.
+
+It does not prove that Graph always returns an empty collection for every tenant
+or meeting type. Microsoft does not document a guaranteed mid-meeting status or
+response shape. The supported contract remains post-meeting transcript
+retrieval, so the architecture must not depend on active-meeting Graph polling.
+
+**POC decision:** Microsoft Graph remains the final post-meeting transcript and
+reconciliation source. Rolling context requires a separately supported live
+content source.
 
 For a visual comparison, open
 [`live-meeting-intelligence-coverage.html`](live-meeting-intelligence-coverage.html).
