@@ -1,7 +1,10 @@
 using BotMeetings.TranscriptIngestion;
 using BotMeetings.TranscriptQna;
+using BotMeetings.LiveContext;
+using BotMeetings.TranscriptDiagnostics;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace BotMeetings.Tests;
@@ -46,6 +49,14 @@ public sealed class TranscriptQnaTests : IDisposable
     }
 
     [Fact]
+    public void Live_context_key_validation_accepts_only_the_configured_key()
+    {
+        Assert.True(LiveContextKeyValidator.IsValid("expected-key", "expected-key"));
+        Assert.False(LiveContextKeyValidator.IsValid("wrong-key", "expected-key"));
+        Assert.False(LiveContextKeyValidator.IsValid(null, "expected-key"));
+    }
+
+    [Fact]
     public async Task Service_returns_waiting_notice_without_completed_transcript()
     {
         var store = new StubSourceDocumentStore();
@@ -54,7 +65,7 @@ public sealed class TranscriptQnaTests : IDisposable
 
         var result = await service.AnswerAsync("tenant-a", "conversation-a", "What was decided?", CancellationToken.None);
 
-        Assert.Contains("don't have a completed transcript", result.Message);
+        Assert.Contains("don't have live or completed meeting context", result.Message);
         Assert.Empty(result.Citations);
         Assert.Equal(0, generator.CallCount);
         Assert.Equal("tenant-a", store.RequestedTenantId);
@@ -90,6 +101,72 @@ public sealed class TranscriptQnaTests : IDisposable
         Assert.Contains("Jane said to ship Friday [S1].", result.Message);
         Assert.Contains("[S1] Jane — 00:01:05–00:01:10", result.Message);
         Assert.Equal(["S1"], result.Citations);
+    }
+
+    [Fact]
+    public async Task Service_uses_only_same_tenant_active_meeting_live_context()
+    {
+        var completedStore = new StubSourceDocumentStore();
+        var activeMeetings = new ActiveMeetingStore();
+        activeMeetings.Set(
+            "conversation-a",
+            new ActiveMeetingTarget("resource", "organizer", "tenant-a", "meeting-live"));
+        var liveStore = new StubLiveContextStore
+        {
+            Context = new LiveMeetingContext(
+                "1.0",
+                "tenant-a",
+                "meeting-live",
+                DateTimeOffset.Parse("2026-10-16T15:00:00Z"),
+                DateTimeOffset.Parse("2026-10-16T15:00:02Z"),
+                [
+                    new LiveCaption(
+                        "caption-1",
+                        "speaker-1",
+                        "Jane",
+                        "The launch date is Friday.",
+                        DateTimeOffset.Parse("2026-10-16T15:00:00Z"),
+                        DateTimeOffset.Parse("2026-10-16T15:00:01Z"),
+                        DateTimeOffset.Parse("2026-10-16T15:00:02Z"))
+                ])
+        };
+        var service = CreateService(
+            completedStore,
+            new StubAnswerGenerator("Jane said the launch date is Friday [S1]."),
+            liveContextStore: liveStore,
+            activeMeetingStore: activeMeetings);
+
+        var result = await service.AnswerAsync(
+            "tenant-a",
+            "conversation-a",
+            "What is the launch date?",
+            CancellationToken.None);
+
+        Assert.Contains("launch date is Friday", result.Message);
+        Assert.Equal("tenant-a", liveStore.RequestedTenantId);
+        Assert.Equal("meeting-live", liveStore.RequestedMeetingId);
+        Assert.Null(completedStore.RequestedTenantId);
+    }
+
+    [Fact]
+    public async Task Service_does_not_read_another_tenants_active_live_context()
+    {
+        var completedStore = new StubSourceDocumentStore();
+        var activeMeetings = new ActiveMeetingStore();
+        activeMeetings.Set(
+            "conversation-a",
+            new ActiveMeetingTarget("resource", "organizer", "tenant-b", "meeting-live"));
+        var liveStore = new StubLiveContextStore();
+        var service = CreateService(
+            completedStore,
+            new StubAnswerGenerator("unused"),
+            liveContextStore: liveStore,
+            activeMeetingStore: activeMeetings);
+
+        await service.AnswerAsync("tenant-a", "conversation-a", "What happened?", CancellationToken.None);
+
+        Assert.Null(liveStore.RequestedTenantId);
+        Assert.Equal("tenant-a", completedStore.RequestedTenantId);
     }
 
     [Fact]
@@ -205,6 +282,38 @@ public sealed class TranscriptQnaTests : IDisposable
         Assert.Null(await store.GetLatestCompletedAsync(document.TenantId, "conversation-a", CancellationToken.None));
     }
 
+    [Fact]
+    public async Task Live_context_store_deduplicates_and_isolates_tenant_and_meeting()
+    {
+        var store = new FileLiveContextStore(
+            Options.Create(new LiveContextOptions
+            {
+                DataPath = Path.Combine(temporaryPath, "live"),
+                MaximumCaptionsPerMeeting = 10
+            }),
+            new TestHostEnvironment());
+        var receivedAt = DateTimeOffset.UtcNow;
+        var request = new CreateLiveCaptionRequest
+        {
+            MeetingId = "meeting-a",
+            SpeakerId = "speaker-a",
+            SpeakerDisplayName = "Jane",
+            SpokenText = "The launch date is Friday.",
+            Timestamp = receivedAt.AddSeconds(-1),
+            ResultType = "Final"
+        };
+
+        var first = await store.AddAsync("tenant-a", request, receivedAt, CancellationToken.None);
+        var duplicate = await store.AddAsync("tenant-a", request, receivedAt.AddSeconds(1), CancellationToken.None);
+
+        Assert.False(first.Duplicate);
+        Assert.True(duplicate.Duplicate);
+        Assert.Equal(first.Caption.Id, duplicate.Caption.Id);
+        Assert.Single((await store.GetAsync("tenant-a", "meeting-a", CancellationToken.None))!.Captions);
+        Assert.Null(await store.GetAsync("tenant-a", "meeting-b", CancellationToken.None));
+        Assert.Null(await store.GetAsync("tenant-b", "meeting-a", CancellationToken.None));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(temporaryPath)) Directory.Delete(temporaryPath, true);
@@ -215,17 +324,27 @@ public sealed class TranscriptQnaTests : IDisposable
         ITranscriptAnswerGenerator generator,
         int maximumConcurrentAnswers = 2,
         TimeSpan? queueWaitTimeout = null,
-        TimeSpan? answerTimeout = null) =>
-        new(store, new TranscriptContextSelector(), generator, Options.Create(new TranscriptAgentOptions
-        {
-            Endpoint = "https://example.openai.azure.com",
-            DeploymentName = "test",
-            MaximumContextChunks = 2,
-            MaximumQuestionCharacters = 1000,
-            MaximumConcurrentAnswers = maximumConcurrentAnswers,
-            QueueWaitTimeout = queueWaitTimeout ?? TimeSpan.FromSeconds(5),
-            AnswerTimeout = answerTimeout ?? TimeSpan.FromMinutes(2)
-        }));
+        TimeSpan? answerTimeout = null,
+        ILiveContextStore? liveContextStore = null,
+        ActiveMeetingStore? activeMeetingStore = null) =>
+        new(
+            store,
+            liveContextStore ?? new EmptyLiveContextStore(),
+            activeMeetingStore ?? new ActiveMeetingStore(),
+            new TranscriptContextSelector(),
+            generator,
+            Options.Create(new TranscriptAgentOptions
+            {
+                Endpoint = "https://example.openai.azure.com",
+                DeploymentName = "test",
+                MaximumContextChunks = 2,
+                MaximumQuestionCharacters = 1000,
+                MaximumConcurrentAnswers = maximumConcurrentAnswers,
+                QueueWaitTimeout = queueWaitTimeout ?? TimeSpan.FromSeconds(5),
+                AnswerTimeout = answerTimeout ?? TimeSpan.FromMinutes(2)
+            }),
+            Options.Create(new LiveContextOptions { Enabled = true }),
+            NullLogger<TranscriptQuestionAnsweringService>.Instance);
 
     private FileTranscriptStore CreateFileStore() =>
         new(
@@ -283,6 +402,46 @@ public sealed class TranscriptQnaTests : IDisposable
         {
             CallCount++;
             return Task.FromResult(answer);
+        }
+    }
+
+    private sealed class EmptyLiveContextStore : ILiveContextStore
+    {
+        public Task<LiveCaptionWriteResult> AddAsync(
+            string tenantId,
+            CreateLiveCaptionRequest request,
+            DateTimeOffset receivedAt,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<LiveMeetingContext?> GetAsync(
+            string tenantId,
+            string meetingId,
+            CancellationToken cancellationToken) =>
+            Task.FromResult<LiveMeetingContext?>(null);
+    }
+
+    private sealed class StubLiveContextStore : ILiveContextStore
+    {
+        public LiveMeetingContext? Context { get; init; }
+        public string? RequestedTenantId { get; private set; }
+        public string? RequestedMeetingId { get; private set; }
+
+        public Task<LiveCaptionWriteResult> AddAsync(
+            string tenantId,
+            CreateLiveCaptionRequest request,
+            DateTimeOffset receivedAt,
+            CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
+
+        public Task<LiveMeetingContext?> GetAsync(
+            string tenantId,
+            string meetingId,
+            CancellationToken cancellationToken)
+        {
+            RequestedTenantId = tenantId;
+            RequestedMeetingId = meetingId;
+            return Task.FromResult(Context);
         }
     }
 

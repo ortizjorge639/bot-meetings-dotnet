@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using Azure.Identity;
+using BotMeetings.LiveContext;
 using BotMeetings.TranscriptDiagnostics;
 using BotMeetings.TranscriptIngestion;
 using BotMeetings.TranscriptQna;
@@ -46,7 +47,9 @@ builder.Services.AddSingleton(new GraphServiceClient(
 builder.Services.AddSingleton<ITranscriptProvider, GraphTranscriptProvider>();
 builder.Services.AddSingleton<TranscriptIngestionProcessor>();
 builder.Services.AddHostedService<TranscriptIngestionWorker>();
-builder.Services.AddSingleton<ActiveMeetingStore>();
+builder.Services.AddSingleton(services => new ActiveMeetingStore(
+    services.GetRequiredService<Microsoft.Extensions.Options.IOptions<LiveContextOptions>>(),
+    services.GetRequiredService<IHostEnvironment>()));
 builder.Services.AddSingleton<ITranscriptDiagnosticClient, GraphTranscriptDiagnosticClient>();
 builder.Services.AddSingleton<MeetingTranscriptDiagnosticService>();
 builder.Services
@@ -57,9 +60,26 @@ builder.Services
 builder.Services.AddSingleton<TranscriptContextSelector>();
 builder.Services.AddSingleton<ITranscriptAnswerGenerator, AgentFrameworkTranscriptAnswerGenerator>();
 builder.Services.AddSingleton<TranscriptQuestionAnsweringService>();
+builder.Services
+    .AddOptions<LiveContextOptions>()
+    .Bind(builder.Configuration.GetSection(LiveContextOptions.SectionName))
+    .Validate(
+        options => !options.Enabled ||
+            (options.AccessKey.Length >= 32 &&
+             !string.IsNullOrWhiteSpace(options.AcsConnectionString) &&
+             !string.IsNullOrWhiteSpace(options.DataPath) &&
+             options.MaximumCaptionsPerMeeting is >= 1 and <= 10000 &&
+             options.MaximumCaptionAgeHours is >= 1 and <= 168),
+        "Enabled live context requires an access key, ACS connection string, valid data path, and valid limits.")
+    .ValidateOnStart();
+builder.Services.AddSingleton<ILiveContextStore, FileLiveContextStore>();
+builder.Services.AddSingleton<IAcsTokenService, AcsTokenService>();
 
 var webApp = builder.Build();
 var teamsApp = webApp.UseTeams(true);
+var activeMeetings = webApp.Services.GetRequiredService<ActiveMeetingStore>();
+webApp.UseDefaultFiles(new DefaultFilesOptions { RequestPath = "/acs-participant" });
+webApp.UseStaticFiles();
 var transcriptNotifier = webApp.Services.GetRequiredService<TeamsTranscriptNotifier>();
 transcriptNotifier.Initialize(async (conversationId, card) =>
 {
@@ -114,6 +134,14 @@ teamsApp.OnMeetingStart(async (context, cancellationToken) =>
 {
     if (!IsExpectedTenant(context.Activity.Conversation.TenantId, tenantId)) return;
     var activity = context.Activity.Value;
+    activeMeetings.Set(
+        context.Activity.Conversation.Id,
+        new ActiveMeetingTarget(
+            string.Empty,
+            string.Empty,
+            context.Activity.Conversation.TenantId ?? tenantId,
+            activity.Id,
+            activity.JoinUrl));
     try
     {
         var meetingInfo = await context.Api.Meetings.GetByIdAsync(activity.Id, cancellationToken);
@@ -122,9 +150,14 @@ teamsApp.OnMeetingStart(async (context, cancellationToken) =>
         if (!string.IsNullOrWhiteSpace(meetingResourceId) &&
             !string.IsNullOrWhiteSpace(organizerUserId))
         {
-            webApp.Services.GetRequiredService<ActiveMeetingStore>().Set(
+            activeMeetings.Set(
                 context.Activity.Conversation.Id,
-                new ActiveMeetingTarget(meetingResourceId, organizerUserId));
+                new ActiveMeetingTarget(
+                    meetingResourceId,
+                    organizerUserId,
+                    context.Activity.Conversation.TenantId ?? tenantId,
+                    activity.Id,
+                    activity.JoinUrl));
         }
         else
         {
@@ -178,6 +211,7 @@ teamsApp.OnMeetingEnd(async (context, cancellationToken) =>
 {
     if (!IsExpectedTenant(context.Activity.Conversation.TenantId, tenantId)) return;
     var activity = context.Activity.Value;
+    activeMeetings.Remove(context.Activity.Conversation.Id, activity.Id);
     var meetingInfo = await context.Api.Meetings.GetByIdAsync(activity.Id, cancellationToken);
     var request = new TranscriptIngestionRequest(
         context.Activity.Conversation.TenantId ?? tenantId,
@@ -272,5 +306,7 @@ webApp.MapGet("/version", () => Results.Ok(new
     version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown",
     commit = Environment.GetEnvironmentVariable("BUILD_COMMIT") ?? "unknown"
 }));
+webApp.MapLiveContextEndpoints(tenantId);
+webApp.MapFallbackToFile("/acs-participant/{*path:nonfile}", "acs-participant/index.html");
 
 webApp.Run();

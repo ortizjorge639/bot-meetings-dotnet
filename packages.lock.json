@@ -12,6 +12,16 @@
           "OpenAI": "2.9.1"
         }
       },
+      "Azure.Communication.Identity": {
+        "type": "Direct",
+        "requested": "[1.3.1, )",
+        "resolved": "1.3.1",
+        "contentHash": "FuNfpuHD3y+vPBhv84ceJufnMlnU+PlIETtXmo7DIIY1UioSRdWJRU8VSskgffdhFJgfJCN1TocjS5v9iP362g==",
+        "dependencies": {
+          "Azure.Communication.Common": "1.3.0",
+          "Azure.Core": "1.38.0"
+        }
+      },
       "Azure.Identity": {
         "type": "Direct",
         "requested": "[1.18.0, )",
@@ -73,6 +83,14 @@
           "Microsoft.Teams.Extensions.Configuration": "2.0.8",
           "Microsoft.Teams.Extensions.Hosting": "2.0.8",
           "Microsoft.Teams.Extensions.Logging": "2.0.8"
+        }
+      },
+      "Azure.Communication.Common": {
+        "type": "Transitive",
+        "resolved": "1.3.0",
+        "contentHash": "HM0TkQ9stgD/Nm4op37K8qWy9A4Lpk1cXWllkyH66p16FlHrVEPqS4y2YRaa7ElcKmh2SpL1rUblnD/UbKmx0g==",
+        "dependencies": {
+          "Azure.Core": "1.37.0"
         }
       },
       "Azure.Core": {

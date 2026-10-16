@@ -18,10 +18,53 @@ env:
   AZURE_WEBAPP_NAME: bot-meeting-plan
   AZURE_RESOURCE_GROUP: bot-meeting-rg
   AZURE_WEBAPP_URL: https://bot-meeting-plan-d3htfcbtevfphuf3.centralus-01.azurewebsites.net
+  AZURE_COMMUNICATION_SERVICE_NAME: bot-meeting-plan-acs-jortizflores
   DOTNET_VERSION: 10.0.x
 
 jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Sign in to Azure
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify target and validate ACS deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          az webapp show \
+            --name "$AZURE_WEBAPP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --output none
+
+          az deployment group validate \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --template-file infra/live-context.bicep \
+            --parameters \
+              communicationServiceName="$AZURE_COMMUNICATION_SERVICE_NAME" \
+              communicationDataLocation="United States" \
+            --output none
+
+          az deployment group what-if \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --template-file infra/live-context.bicep \
+            --parameters \
+              communicationServiceName="$AZURE_COMMUNICATION_SERVICE_NAME" \
+              communicationDataLocation="United States" \
+            --result-format ResourceIdOnly \
+            --no-pretty-print
+
   build-test-deploy:
+    needs: preflight
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[validate only]')
     runs-on: ubuntu-latest
     environment:
       name: production
@@ -41,6 +84,25 @@ jobs:
       - name: Test
         run: dotnet test tests/BotMeetings.Tests/BotMeetings.Tests.csproj --configuration Release --no-restore
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+          cache-dependency-path: acs-calling-client/package-lock.json
+
+      - name: Install ACS browser client dependencies
+        working-directory: acs-calling-client
+        run: npm ci
+
+      - name: Test ACS browser client
+        working-directory: acs-calling-client
+        run: npm test
+
+      - name: Build ACS browser client
+        working-directory: acs-calling-client
+        run: npm run build
+
       - name: Publish
         run: dotnet publish BotMeetings.csproj --configuration Release --no-restore --output publish
 
@@ -50,6 +112,60 @@ jobs:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Configure ACS live context
+        shell: bash
+        env:
+          LIVE_CONTEXT_ACCESS_KEY: ${{ secrets.LIVE_CONTEXT_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+
+          if [ "${#LIVE_CONTEXT_ACCESS_KEY}" -lt 32 ]; then
+            echo "::error::LIVE_CONTEXT_ACCESS_KEY must contain at least 32 characters."
+            exit 1
+          fi
+
+          az extension add \
+            --name communication \
+            --upgrade \
+            --yes \
+            --output none
+
+          if ! az resource show \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --resource-type "Microsoft.Communication/communicationServices" \
+            --name "$AZURE_COMMUNICATION_SERVICE_NAME" \
+            --output none 2>/dev/null; then
+            az communication create \
+              --name "$AZURE_COMMUNICATION_SERVICE_NAME" \
+              --resource-group "$AZURE_RESOURCE_GROUP" \
+              --location "Global" \
+              --data-location "United States" \
+              --output none
+          fi
+
+          acs_connection_string="$(az communication list-key \
+            --name "$AZURE_COMMUNICATION_SERVICE_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query primaryConnectionString \
+            --output tsv)"
+
+          if [ -z "$acs_connection_string" ]; then
+            echo "::error::Azure Communication Services did not return a connection string."
+            exit 1
+          fi
+
+          az webapp config appsettings set \
+            --name "$AZURE_WEBAPP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --settings \
+              "LiveContext__Enabled=true" \
+              "LiveContext__AccessKey=$LIVE_CONTEXT_ACCESS_KEY" \
+              "LiveContext__AcsConnectionString=$acs_connection_string" \
+              "LiveContext__DataPath=/home/data/bot-meetings/live-context" \
+            --output none
+
+          unset acs_connection_string
 
       - name: Record build provenance
         run: |
@@ -82,6 +198,11 @@ jobs:
           curl --fail --silent --show-error \
             --retry 12 --retry-delay 5 --retry-all-errors \
             --max-time 180 \
+            "$AZURE_WEBAPP_URL/acs-participant/" | grep --fixed-strings --quiet "ACS meeting captions"
+
+          curl --fail --silent --show-error \
+            --retry 12 --retry-delay 5 --retry-all-errors \
+            --max-time 180 \
             "$AZURE_WEBAPP_URL/health/live" | grep --fixed-strings --quiet '"status":"healthy"'
 
           curl --fail --silent --show-error \
@@ -98,3 +219,19 @@ jobs:
             "$AZURE_WEBAPP_URL/api/messages")"
 
           test "$messages_status" = "405"
+
+          token_without_key_status="$(curl --silent --show-error \
+            --output /dev/null --write-out '%{http_code}' \
+            --max-time 30 \
+            "$AZURE_WEBAPP_URL/api/acs/token")"
+
+          test "$token_without_key_status" = "401"
+
+          token_response="$(curl --fail --silent --show-error \
+            --max-time 30 \
+            --header "X-Live-Context-Key: ${{ secrets.LIVE_CONTEXT_ACCESS_KEY }}" \
+            "$AZURE_WEBAPP_URL/api/acs/token")"
+
+          jq --exit-status \
+            '(.userId | length > 0) and (.token | length > 0) and (.expiresOn | length > 0)' \
+            <<< "$token_response" > /dev/null

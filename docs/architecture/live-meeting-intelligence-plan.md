@@ -115,60 +115,93 @@ content source.
 For a visual comparison, open
 [`live-meeting-intelligence-coverage.html`](live-meeting-intelligence-coverage.html).
 
-## Target architecture
+## Build today: live context gathering and querying
 
 ```mermaid
 flowchart LR
-    Teams[Teams meeting] --> Bot[Existing Teams bot - App Service]
-    Teams --> Live[Live content adapter]
-    Live --> Speech[Azure AI Speech]
-    Speech --> Bus[Service Bus utterance events]
-    Bot --> Bus
+    Meeting["Live Teams meeting"]
 
-    Bus --> Context[Context processor - Functions]
-    Context --> Cosmos[(Cosmos DB rolling state)]
-    Context --> Blob[(Blob Storage artifacts)]
-    Context --> Search[Azure AI Search chunks]
+    subgraph NewACS["NEW · LIVE CONTEXT SOURCE"]
+        ACS["Azure Communication<br/>Services resource"]
+        Token["ACS identity + token endpoint<br/>Azure.Communication.Identity"]
+        Client["Small ACS web participant<br/>joins meeting · enables captions"]
+        Calling["@azure/communication-calling<br/>caption events"]
+    end
 
-    Bot --> Orchestrator[Durable Functions orchestrator]
-    Orchestrator --> Summarizer[Summary activities]
-    Summarizer --> Model[Azure OpenAI or Foundry]
-    Summarizer --> Cosmos
-    Summarizer --> Blob
-    Summarizer --> Notify[Proactive Teams notifier]
-    Notify --> Teams
+    subgraph ExistingApp["EXISTING APP SERVICE · EXTEND"]
+        Ingest["New caption ingestion API<br/>speaker · text · timestamp"]
+        Context["New live meeting context<br/>append · order · deduplicate"]
+        Home["Existing /home storage<br/>live-context JSON"]
+        Query["Extend existing Q&A<br/>read active meeting context"]
+    end
 
-    Teams --> QA[Q and A endpoint - App Service]
-    QA --> Instructions[Instruction provider]
-    Instructions --> InstructionBlobs[(Versioned Markdown blobs)]
-    QA --> Cosmos
-    QA --> Search
-    QA --> Model
-    QA --> Teams
+    subgraph Reuse["EXISTING · REUSE"]
+        Bot["Azure Bot + Teams channel<br/>question in meeting chat"]
+        Model["Azure OpenAI<br/>gpt-4.1-mini"]
+        Answer["Answer posted to<br/>Teams meeting chat"]
+    end
 
-    Graph[Microsoft Graph post-meeting transcript] --> Reconcile[Transcript reconciler]
-    Reconcile --> Blob
-    Reconcile --> Search
-    Reconcile --> Cosmos
+    subgraph Proof["TODAY'S PROOF"]
+        P1["ACS participant joins<br/>the scheduled meeting"]
+        P2["Spoken words arrive as<br/>caption events"]
+        P3["New words become queryable<br/>from Teams chat"]
+        P4["Measure minimum observed<br/>caption-to-query latency"]
+    end
 
-    Ops[Operations admin] --> InstructionBlobs
-    Config[App Configuration] --> Instructions
+    ACS --> Token --> Client
+    Calling --> Client
+    Meeting <-->|"meeting link · lobby admission"| Client
+    Client -->|"finalized caption events · HTTPS"| Ingest
+    Ingest --> Context
+    Context <--> Home
 
-    Vault[Key Vault] --> Bot
-    Vault --> Context
-    Vault --> Orchestrator
+    Bot -->|"existing Teams SDK"| Query
+    Context --> Query
+    Query -->|"existing Agent Framework"| Model
+    Model --> Answer
 
-    classDef existing fill:#dbeafe,stroke:#2563eb,color:#111827
-    classDef newnode fill:#fef3c7,stroke:#d97706,color:#111827
-    classDef data fill:#dcfce7,stroke:#16a34a,color:#111827
+    Client --> P1
+    Ingest --> P2
+    Query --> P3
+    Query --> P4
 
-    class Bot,QA,Graph existing
-    class Live,Speech,Bus,Context,Orchestrator,Summarizer,Model,Notify,Instructions,Reconcile,Ops,Config,Vault newnode
-    class Cosmos,Blob,Search,InstructionBlobs data
+    classDef new fill:#fef3c7,stroke:#d97706,color:#111827,stroke-width:2px
+    classDef extend fill:#fde68a,stroke:#b45309,color:#111827,stroke-width:2px
+    classDef reuse fill:#dbeafe,stroke:#2563eb,color:#111827
+    classDef proof fill:#dcfce7,stroke:#16a34a,color:#111827
+
+    class ACS,Token,Client,Calling new
+    class Ingest,Context,Query extend
+    class Home,Bot,Model,Answer reuse
+    class P1,P2,P3,P4 proof
 ```
 
-Blue nodes are existing or extended capabilities, yellow nodes are new
-processing or infrastructure, and green nodes are durable data stores.
+The proof starts with speech in an active scheduled Teams meeting and ends when
+a question asked in that meeting's chat is answered from the caption context
+captured so far.
+
+| Resource or SDK | Use today | New provisioning |
+|---|---|---|
+| Azure Communication Services resource | Issues the identity used by the meeting participant | **One new resource** |
+| `Azure.Communication.Identity` | Existing .NET App Service issues a short-lived ACS user token | **One new NuGet package** |
+| `@azure/communication-calling` | Web participant joins the meeting and receives caption events | **One new client SDK** |
+| `@azure/communication-common` | Shared ACS identity and token types in the web participant | **One new client SDK** |
+| Existing App Service `bot-meeting-plan` | Hosts token, caption-ingestion, live-context, and Q&A endpoints | None |
+| Existing App Service `/home` | Persists active meeting caption context as JSON | None |
+| Existing Azure Bot and Teams channel | Accepts the question and posts the answer in meeting chat | None |
+| Existing Azure OpenAI `gpt-4.1-mini` | Answers from only the live caption context accumulated so far | None |
+| Existing Teams and Agent Framework SDKs | Preserve the current Teams-chat and model integration | None |
+
+Azure AI Speech is not separately provisioned for this path: the experiment
+consumes caption events supplied to the ACS Calling SDK participant.
+
+**Out of scope for this proof:** replay, scheduled summaries, condensed
+summaries, Graph reconciliation, Service Bus, Functions, Cosmos DB, AI Search,
+and production scale-out.
+
+There is no assumed latency threshold. The experiment records timestamps at
+caption receipt, context persistence, question receipt, and answer generation
+to establish the minimum and observed end-to-end latency.
 
 ## Complexity scale
 

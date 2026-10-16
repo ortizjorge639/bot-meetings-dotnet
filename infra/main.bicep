@@ -8,6 +8,9 @@ param namePrefix string
 @description('Azure region for regional resources.')
 param location string = resourceGroup().location
 
+@description('Azure Communication Services data-at-rest geography. This is independent of the Azure resource region.')
+param communicationDataLocation string = 'United States'
+
 @description('Microsoft Entra tenant ID that owns the bot app registration.')
 param tenantId string
 
@@ -17,6 +20,11 @@ param botClientId string
 @secure()
 @description('Client secret used by the Teams bot runtime. Rotate it after bootstrap and use Key Vault for production.')
 param botClientSecret string
+
+@secure()
+@minLength(32)
+@description('Shared access key required by the scoped live-context POC endpoints.')
+param liveContextAccessKey string
 
 @description('Azure OpenAI model deployment name.')
 param modelDeploymentName string = 'gpt-4.1-mini'
@@ -35,6 +43,7 @@ var normalizedPrefix = toLower(replace(namePrefix, '-', ''))
 var planName = '${namePrefix}-plan'
 var webAppName = '${namePrefix}-${uniqueString(subscription().id, resourceGroup().id)}'
 var openAIName = take('${normalizedPrefix}${uniqueString(subscription().id, resourceGroup().id)}', 24)
+var communicationServiceName = take('${namePrefix}-acs-${uniqueString(subscription().id, resourceGroup().id)}', 63)
 var botName = '${namePrefix}-bot'
 
 resource plan 'Microsoft.Web/serverfarms@2023-12-01' = {
@@ -78,6 +87,16 @@ resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-
       version: modelVersion
     }
     versionUpgradeOption: 'OnceNewDefaultVersionAvailable'
+  }
+}
+
+resource communicationService 'Microsoft.Communication/communicationServices@2025-05-01' = {
+  name: communicationServiceName
+  location: 'global'
+  properties: {
+    dataLocation: communicationDataLocation
+    disableLocalAuth: false
+    publicNetworkAccess: 'Enabled'
   }
 }
 
@@ -129,6 +148,22 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'TranscriptAgent__DeploymentName'
           value: modelDeployment.name
+        }
+        {
+          name: 'LiveContext__AcsConnectionString'
+          value: communicationService.listKeys().primaryConnectionString
+        }
+        {
+          name: 'LiveContext__Enabled'
+          value: 'true'
+        }
+        {
+          name: 'LiveContext__AccessKey'
+          value: liveContextAccessKey
+        }
+        {
+          name: 'LiveContext__DataPath'
+          value: '/home/data/bot-meetings/live-context'
         }
         {
           name: 'BUILD_COMMIT'
@@ -185,4 +220,5 @@ output webAppName string = webApp.name
 output webAppUrl string = 'https://${webApp.properties.defaultHostName}'
 output botName string = bot.name
 output openAIAccountName string = openAI.name
+output communicationServiceName string = communicationService.name
 output botMessagingEndpoint string = bot.properties.endpoint

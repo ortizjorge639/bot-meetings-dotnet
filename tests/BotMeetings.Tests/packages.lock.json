@@ -44,6 +44,23 @@
           "OpenAI": "2.9.1"
         }
       },
+      "Azure.Communication.Common": {
+        "type": "Transitive",
+        "resolved": "1.3.0",
+        "contentHash": "HM0TkQ9stgD/Nm4op37K8qWy9A4Lpk1cXWllkyH66p16FlHrVEPqS4y2YRaa7ElcKmh2SpL1rUblnD/UbKmx0g==",
+        "dependencies": {
+          "Azure.Core": "1.37.0"
+        }
+      },
+      "Azure.Communication.Identity": {
+        "type": "Transitive",
+        "resolved": "1.3.1",
+        "contentHash": "FuNfpuHD3y+vPBhv84ceJufnMlnU+PlIETtXmo7DIIY1UioSRdWJRU8VSskgffdhFJgfJCN1TocjS5v9iP362g==",
+        "dependencies": {
+          "Azure.Communication.Common": "1.3.0",
+          "Azure.Core": "1.38.0"
+        }
+      },
       "Azure.Core": {
         "type": "Transitive",
         "resolved": "1.51.1",
@@ -943,6 +960,7 @@
         "type": "Project",
         "dependencies": {
           "Azure.AI.OpenAI": "[2.9.0-beta.1, )",
+          "Azure.Communication.Identity": "[1.3.1, )",
           "Azure.Identity": "[1.18.0, )",
           "Microsoft.Agents.AI.OpenAI": "[1.19.0, )",
           "Microsoft.Graph": "[5.103.0, )",

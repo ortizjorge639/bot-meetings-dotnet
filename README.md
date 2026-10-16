@@ -42,6 +42,9 @@ This .NET 10 sample listens for Microsoft Teams meeting events, retrieves the me
 - Liveness, readiness, and build-version endpoints.
 - An on-demand `diagnose transcript` meeting-chat command that reports whether
   Graph currently exposes transcript content without posting that content.
+- An ACS Calling SDK browser participant that joins a scheduled Teams meeting,
+  forwards finalized caption events, and makes the captured context queryable
+  from that meeting's chat.
 - Bicep and PowerShell for a repeatable new-tenant preview deployment.
 - GitHub Actions validation and App Service deployment.
 
@@ -54,6 +57,12 @@ This .NET 10 sample listens for Microsoft Teams meeting events, retrieves the me
 5. The bot posts a readiness card in the meeting chat.
 6. Questions in that chat select relevant chunks and invoke Azure OpenAI.
 7. Responses are accepted only when they contain known source labels; deterministic speaker and timestamp notes are appended.
+
+During an active meeting, the optional live-context POC follows a separate
+source path: an admitted ACS browser participant receives finalized Teams
+caption events, posts them to the App Service, and stores them under `/home`.
+Questions in the active meeting chat prefer that meeting's captured live
+context; completed Graph transcripts remain the fallback.
 
 The current Graph call is app-only and uses `/users/{organizerId}/onlineMeetings/{meetingId}/transcripts`. It therefore requires organization-wide Graph application permissions **and** a Teams application access policy for each allowed organizer. Manifest RSC consent is not a substitute for that authorization path.
 
@@ -81,10 +90,11 @@ az login --tenant <tenant-guid>
   -NamePrefix meeting-copilot-dev `
   -ResourceGroup meeting-copilot-dev-rg `
   -Location centralus `
-  -Subscription <subscription-id>
+  -Subscription <subscription-id> `
+  -LiveContextAccessKey <random-value-at-least-32-characters>
 ```
 
-The script creates or reuses a single-tenant Entra app, configures the least-privileged `OnlineMeetingTranscript.Read.All` permission, creates a one-year bootstrap secret, and deploys App Service, Azure Bot with the Teams channel, and a keyless Azure OpenAI account. It does **not** silently grant tenant admin consent unless `-GrantAdminConsent` is explicitly supplied by an authorized administrator.
+The script creates or reuses a single-tenant Entra app, configures the least-privileged `OnlineMeetingTranscript.Read.All` permission, creates a one-year bootstrap secret, and deploys App Service, Azure Bot with the Teams channel, Azure Communication Services, and a keyless Azure OpenAI account. It does **not** silently grant tenant admin consent unless `-GrantAdminConsent` is explicitly supplied by an authorized administrator. Store the live-context access key in an approved secret manager; it protects the POC token, meeting-resolution, and caption-ingestion endpoints.
 
 On reruns, pass `-AppId <application-client-id>` to select the existing registration explicitly. Credential creation is additive so an unsuccessful deployment does not invalidate the previously deployed credential; remove superseded credentials only after the new deployment is validated.
 
@@ -108,6 +118,12 @@ See [Tenant and Teams administrator setup](docs/tenant-admin-setup.md) for the p
 ### 3. Publish the code
 
 ```powershell
+Push-Location acs-calling-client
+npm ci
+npm test
+npm run build
+Pop-Location
+
 dotnet restore --locked-mode
 dotnet test tests/BotMeetings.Tests/BotMeetings.Tests.csproj -c Release --no-restore
 dotnet publish BotMeetings.csproj -c Release --no-restore -o publish
@@ -136,14 +152,31 @@ The package is written to `appPackage/build/bot-meetings.zip`. Keep both IDs sta
 
 For development, in Teams select **Apps** > **Manage your apps** > **Upload an app** > **Upload a custom app**. Add it to a scheduled private meeting chat before the meeting starts.
 
-1. Start and transcribe the meeting.
-2. Have at least two people speak so attribution can be checked.
-3. While the meeting is active, send `diagnose transcript` in the meeting chat.
+To test live context:
+
+1. Start the scheduled meeting with at least one Teams participant.
+2. Open `https://<app-name>.azurewebsites.net/acs-participant/` in current
+   Microsoft Edge or Google Chrome. Firefox captions are not supported.
+3. Enter the meeting join link, participant display name, and configured
+   live-context access key, then select **Join meeting**.
+4. Admit the ACS participant from the Teams lobby unless the meeting permits it
+   to bypass the lobby.
+5. Confirm the participant reports connected captions, then have at least two
+   people speak. The page should report delivered finalized captions.
+6. Ask a question in the meeting chat whose answer was spoken after the ACS
+   participant joined. Verify that the answer cites only captured live context.
+7. Notify all participants before enabling or storing captions and follow the
+   applicable consent, retention, and privacy requirements.
+
+To test the existing Graph path:
+
+1. Start transcription and have at least two people speak.
+2. While the meeting is active, send `diagnose transcript` in the meeting chat.
    The bot makes one Graph list/content attempt and reports the observed status
    and content character count without posting transcript text.
-4. End the meeting and wait for the readiness message.
-5. Ask a question whose answer is explicit in the transcript.
-6. Verify the answer, source label, speaker, timestamp, and tenant/chat isolation.
+3. End the meeting and wait for the readiness message.
+4. Ask a question whose answer is explicit in the transcript.
+5. Verify the answer, source label, speaker, timestamp, and tenant/chat isolation.
 
 For organization-wide distribution, follow [Publish and validate in your organization](docs/publish-and-test.md).
 
@@ -161,6 +194,12 @@ Create a git-ignored `appsettings.Development.json` and enter local secrets dire
   "TranscriptAgent": {
     "Endpoint": "https://<account>.openai.azure.com/",
     "DeploymentName": "gpt-4.1-mini"
+  },
+  "LiveContext": {
+    "Enabled": true,
+    "AccessKey": "<random-value-at-least-32-characters>",
+    "AcsConnectionString": "<acs-connection-string>",
+    "DataPath": "App_Data/live-context"
   }
 }
 ```
@@ -185,6 +224,12 @@ Authenticate to Azure for `DefaultAzureCredential`, then run `dotnet run`. Use a
 | `TranscriptAgent__MaximumConcurrentAnswers` | 2 | In-process model concurrency. |
 | `TranscriptAgent__QueueWaitTimeout` | 5 seconds | Admission wait before returning busy. |
 | `TranscriptAgent__AnswerTimeout` | 2 minutes | Per-answer model deadline. |
+| `LiveContext__Enabled` | `false` | Enables the protected ACS token, meeting-resolution, and caption-ingestion endpoints. |
+| `LiveContext__AccessKey` | required when enabled | POC shared key of at least 32 characters. Never commit or log it. |
+| `LiveContext__AcsConnectionString` | required when enabled | Server-only ACS credential used to issue short-lived VoIP tokens. |
+| `LiveContext__DataPath` | `/home/data/...` | Meeting-isolated finalized-caption JSON storage. |
+| `LiveContext__MaximumCaptionsPerMeeting` | 5000 | Per-meeting storage bound. |
+| `LiveContext__MaximumCaptionAgeHours` | 24 | Rejects stale caption events outside the accepted window. |
 
 Runtime probes:
 
@@ -196,6 +241,11 @@ Runtime probes:
 
 - Transcript text is treated as untrusted prompt data.
 - Q&A lookup is scoped by tenant ID and Teams conversation ID.
+- Live-caption writes are protected by a POC access key and resolved only
+  against active meetings in the configured tenant. This shared key is not a
+  production user-authorization model.
+- ACS does not store captions. This application does, so participant notice,
+  consent, retention, and deletion requirements apply before testing.
 - Azure OpenAI local keys are disabled by Bicep; App Service uses managed identity.
 - The Teams bot still uses a bootstrap client secret. Production deployments should use Key Vault references, rotation alerts, and a tested rotation runbook.
 - Model citations are syntactically constrained to selected chunks; they are not claim-by-claim factual verification.
@@ -213,12 +263,24 @@ See [Operations, privacy, and production readiness](docs/operations-and-producti
 | Transcript has no speakers | Speaker attribution is disabled by tenant policy or the returned format lacks attribution. |
 | No transcript after meeting end | Transcription was not started, meeting type is unsupported, organizer policy is missing, or publication exceeded the polling window. |
 | Bot does not receive events | Azure Bot endpoint/channel, app IDs, app installation scope, or manifest permissions are incorrect. |
+| ACS participant remains in the lobby | A Teams participant must be present and admit it, unless meeting policy allows everyone to bypass the lobby. |
+| ACS participant cannot join | Check the meeting link, external/anonymous meeting policy, ACS token endpoint, and browser diagnostics. |
+| Captions do not start | Use current Edge or Chrome, confirm captions are allowed by Teams policy, and inspect the client diagnostics. Firefox is unsupported. |
+| Caption delivery returns 404 | The bot did not capture the matching meeting-start event, or the pasted join link does not match the active meeting. |
+| Live Q&A has no context | Wait for at least one finalized caption to be delivered for the active meeting. |
 | Q&A says no relevant material | No question terms or speaker names matched the transcript chunks. Ask a more specific question. |
 | Q&A is busy or times out | Concurrency, queue-wait, or model timeout limits were reached. Check App Service and Azure OpenAI metrics. |
 
 ## Validation
 
 ```powershell
+Push-Location acs-calling-client
+npm ci
+npm run typecheck
+npm test
+npm run build
+Pop-Location
+
 dotnet restore --locked-mode
 dotnet format BotMeetings.csproj --verify-no-changes --no-restore
 dotnet test tests/BotMeetings.Tests/BotMeetings.Tests.csproj -c Release --no-restore

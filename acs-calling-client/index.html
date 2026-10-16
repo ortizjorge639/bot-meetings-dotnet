@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ACS meeting captions</title>
+  </head>
+  <body>
+    <main>
+      <h1>ACS meeting captions</h1>
+      <p class="notice">This participant sends final English captions to the live-context POC. Inform meeting participants before starting captions.</p>
+
+      <form id="join-form">
+        <label>Teams meeting link <input id="meeting-link" type="url" required autocomplete="off" /></label>
+        <label>Participant display name <input id="display-name" type="text" maxlength="200" value="Live Context POC" required /></label>
+        <label>POC access key <input id="access-key" type="password" required autocomplete="off" /></label>
+        <button id="join-button" type="submit">Join meeting</button>
+        <button id="leave-button" type="button" disabled>Leave</button>
+      </form>
+
+      <section aria-labelledby="status-heading">
+        <h2 id="status-heading">Status</h2>
+        <dl>
+          <div><dt>Client</dt><dd id="client-state">Not initialized</dd></div>
+          <div><dt>Call connection</dt><dd id="call-state">Not joined</dd></div>
+          <div><dt>Lobby</dt><dd id="lobby-state">Not in lobby</dd></div>
+          <div><dt>Captions</dt><dd id="caption-state">Not started</dd></div>
+          <div><dt>Final captions posted</dt><dd id="post-count">0</dd></div>
+        </dl>
+      </section>
+
+      <section aria-labelledby="captions-heading">
+        <h2 id="captions-heading">Latest caption events</h2>
+        <ol id="caption-events" aria-live="polite"></ol>
+      </section>
+
+      <section aria-labelledby="diagnostics-heading">
+        <h2 id="diagnostics-heading">Diagnostic errors</h2>
+        <pre id="diagnostics" role="alert" aria-live="assertive">None</pre>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

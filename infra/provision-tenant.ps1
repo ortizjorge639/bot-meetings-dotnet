@@ -6,6 +6,7 @@ param(
     [string] $Subscription,
     [string] $TenantId,
     [string] $AppId,
+    [Parameter(Mandatory)] [string] $LiveContextAccessKey,
     [switch] $GrantAdminConsent
 )
 
@@ -94,6 +95,7 @@ try {
             tenantId=$TenantId `
             botClientId=$clientId `
             botClientSecret=$credential `
+            liveContextAccessKey=$LiveContextAccessKey `
         --output table
     Assert-LastCommand "Deploying Azure resources"
 }
