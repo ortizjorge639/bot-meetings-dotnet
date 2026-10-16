@@ -24,6 +24,8 @@ env:
 jobs:
   preflight:
     runs-on: ubuntu-latest
+    environment:
+      name: production
     steps:
       - name: Check out source
         uses: actions/checkout@v4
