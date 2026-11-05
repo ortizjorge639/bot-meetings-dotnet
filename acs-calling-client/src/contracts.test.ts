@@ -3,6 +3,7 @@ import type { CaptionsInfo } from "@azure/communication-calling";
 import {
   parseResolvedMeetingResponse,
   parseTokenResponse,
+  requireAcceptedReceipt,
   toFinalPayload
 } from "./contracts";
 
@@ -22,6 +23,23 @@ describe("toFinalPayload", () => {
     expect(
       toFinalPayload("meeting-1", { ...baseEvent, resultType: "Partial" })
     ).toBeUndefined();
+  });
+
+  describe("accepted persistence receipt", () => {
+    const receipt = {
+      accepted: true, duplicate: false, captionId: "caption-1",
+      receivedAt: "2026-11-05T15:00:00Z", persistedAt: "2026-11-05T15:00:01Z"
+    };
+    it("accepts the server shape", () => {
+      expect(() => requireAcceptedReceipt(receipt)).not.toThrow();
+    });
+    it.each([
+      null, {}, { accepted: true }, { ...receipt, accepted: false },
+      { ...receipt, captionId: "" }, { ...receipt, duplicate: "false" },
+      { ...receipt, receivedAt: "invalid" }, { ...receipt, persistedAt: null }
+    ])("rejects malformed or rejected receipt %#", value => {
+      expect(() => requireAcceptedReceipt(value)).toThrow("persistence receipt");
+    });
   });
 
   it("creates the server contract for final caption events", () => {

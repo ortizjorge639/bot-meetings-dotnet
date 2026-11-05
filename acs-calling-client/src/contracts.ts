@@ -18,6 +18,15 @@ export interface ResolvedMeetingResponse {
   meetingId: string;
 }
 
+export function requireAcceptedReceipt(value: unknown): void {
+  if (!isRecord(value) || value.accepted !== true || typeof value.duplicate !== "boolean" ||
+      typeof value.captionId !== "string" || !value.captionId ||
+      typeof value.receivedAt !== "string" || Number.isNaN(Date.parse(value.receivedAt)) ||
+      typeof value.persistedAt !== "string" || Number.isNaN(Date.parse(value.persistedAt))) {
+    throw new Error("Final caption POST did not return a valid accepted persistence receipt.");
+  }
+}
+
 export interface LiveCaptionPayload {
   meetingId: string;
   speakerId: string;

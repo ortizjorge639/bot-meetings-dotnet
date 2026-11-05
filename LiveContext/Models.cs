@@ -48,6 +48,12 @@ public sealed record ResolveActiveMeetingRequest
 /// <summary>Internal identifier for an active meeting.</summary>
 public sealed record ActiveMeetingResponse(string MeetingId);
 
+public sealed record CaptureHeartbeatRequest(
+    string MeetingId,
+    string State,
+    int PendingCaptions,
+    int FailedCaptions);
+
 public sealed record LiveCaption(
     string Id,
     string SpeakerId,

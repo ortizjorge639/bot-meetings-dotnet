@@ -74,6 +74,7 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddSingleton<ILiveContextStore, FileLiveContextStore>();
 builder.Services.AddSingleton<IAcsTokenService, AcsTokenService>();
+builder.Services.AddSingleton<LiveCaptureStatusService>();
 
 var webApp = builder.Build();
 var teamsApp = webApp.UseTeams(true);
@@ -268,8 +269,11 @@ teamsApp.OnMessage(async (context, cancellationToken) =>
         if (question.Contains("diagnose transcript", StringComparison.OrdinalIgnoreCase))
         {
             var diagnostic = webApp.Services.GetRequiredService<MeetingTranscriptDiagnosticService>();
+            var qna = webApp.Services.GetRequiredService<TranscriptQuestionAnsweringService>();
+            var source = await qna.DescribeContextAsync(
+                tenantId, context.Activity.Conversation.Id, cancellationToken);
             var message = await diagnostic.CheckAsync(context.Activity.Conversation.Id, cancellationToken);
-            await context.Send(message, cancellationToken);
+            await context.Send($"{source}\n\n**Graph diagnostic**\n{message}", cancellationToken);
             return;
         }
 

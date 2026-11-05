@@ -22,7 +22,8 @@ public sealed partial class TranscriptQuestionAnsweringService(
     ITranscriptAnswerGenerator generator,
     IOptions<TranscriptAgentOptions> options,
     IOptions<LiveContextOptions> liveContextOptions,
-    ILogger<TranscriptQuestionAnsweringService> logger)
+    ILogger<TranscriptQuestionAnsweringService> logger,
+    LiveCaptureStatusService captureStatus)
 {
     private readonly SemaphoreSlim answerGate = new(options.Value.MaximumConcurrentAnswers);
 
@@ -53,14 +54,15 @@ public sealed partial class TranscriptQuestionAnsweringService(
         var chunks = selector.Select(document, question, options.Value.MaximumContextChunks);
         if (chunks.Count == 0)
         {
-            return new TranscriptAnswerResult("I couldn't find transcript material to answer that question.", []);
+            return new TranscriptAnswerResult(
+                $"I couldn't find transcript material to answer that question.\n\n{DescribeDocument(document)}", []);
         }
 
         var sources = chunks.Select((chunk, index) => new GroundingSource($"S{index + 1}", chunk)).ToArray();
         if (!await answerGate.WaitAsync(options.Value.QueueWaitTimeout, cancellationToken))
         {
             return new TranscriptAnswerResult(
-                "I'm handling the maximum number of questions right now. Please try again in a moment.",
+                $"I'm handling the maximum number of questions right now. Please try again in a moment.\n\n{DescribeDocument(document)}",
                 []);
         }
 
@@ -76,7 +78,7 @@ public sealed partial class TranscriptQuestionAnsweringService(
             catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
             {
                 return new TranscriptAnswerResult(
-                    "The transcript answer timed out. Please try a more specific question.",
+                    $"The transcript answer timed out. Please try a more specific question.\n\n{DescribeDocument(document)}",
                     []);
             }
         }
@@ -93,7 +95,7 @@ public sealed partial class TranscriptQuestionAnsweringService(
         if (citations.Length == 0 || citations.Any(citation => !allowed.Contains(citation)))
         {
             return new TranscriptAnswerResult(
-                "I couldn't produce a sufficiently grounded answer from this meeting transcript. Try asking more specifically about a speaker, topic, or decision.",
+                $"I couldn't produce a sufficiently grounded answer from this meeting transcript. Try asking more specifically about a speaker, topic, or decision.\n\n{DescribeDocument(document)}",
                 []);
         }
 
@@ -103,7 +105,32 @@ public sealed partial class TranscriptQuestionAnsweringService(
             citedSources.Select(source =>
                 $"- [{source.Citation}] {FormatSpeakers(source.Chunk)} — " +
                 $"{FormatTimestamp(source.Chunk.Start)}–{FormatTimestamp(source.Chunk.End)}"));
-        return new TranscriptAnswerResult($"{answer.Trim()}\n\n**Transcript sources**\n{sourceNotes}", citations);
+        return new TranscriptAnswerResult(
+            $"{answer.Trim()}\n\n{DescribeDocument(document)}\n\n**Transcript sources**\n{sourceNotes}", citations);
+    }
+
+    public async Task<string> DescribeContextAsync(
+        string tenantId, string conversationId, CancellationToken cancellationToken)
+    {
+        var document = await GetDocumentAsync(tenantId, conversationId, cancellationToken);
+        var description = document is null ? "Context: no live or completed transcript material." : DescribeDocument(document);
+        if (liveContextOptions.Value.Enabled &&
+            activeMeetingStore.TryGet(conversationId, out var meeting) &&
+            meeting is not null &&
+            !string.IsNullOrWhiteSpace(meeting.MeetingId) &&
+            string.Equals(meeting.TenantId, tenantId, StringComparison.Ordinal))
+        {
+            description += "\n" + captureStatus.Describe(tenantId, meeting.MeetingId, DateTimeOffset.UtcNow);
+        }
+        return description;
+    }
+
+    private static string DescribeDocument(SourceDocument document)
+    {
+        var age = Math.Max(0, (DateTimeOffset.UtcNow - document.IngestedAt).TotalSeconds);
+        return document.SourceType == "live-captions"
+            ? $"**Context: live ACS captions.** Latest persistence: {document.IngestedAt:O} ({age:F0} seconds ago). This does not confirm that capture is still connected."
+            : $"**Context: completed transcript.** Ingested: {document.IngestedAt:O} ({age:F0} seconds ago).";
     }
 
     private async Task<SourceDocument?> GetDocumentAsync(

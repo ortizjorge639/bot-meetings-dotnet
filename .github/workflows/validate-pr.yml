@@ -24,6 +24,20 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+          cache-dependency-path: acs-calling-client/package-lock.json
+
+      - name: Validate ACS client
+        working-directory: acs-calling-client
+        run: |
+          npm ci
+          npm test
+          npm run build
+
       - name: Restore
         run: dotnet restore tests/BotMeetings.Tests/BotMeetings.Tests.csproj --locked-mode
 

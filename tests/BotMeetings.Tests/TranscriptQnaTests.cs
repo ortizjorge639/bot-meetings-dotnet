@@ -100,6 +100,8 @@ public sealed class TranscriptQnaTests : IDisposable
 
         Assert.Contains("Jane said to ship Friday [S1].", result.Message);
         Assert.Contains("[S1] Jane — 00:01:05–00:01:10", result.Message);
+        Assert.Contains("Context: completed transcript.", result.Message);
+        Assert.Contains("Ingested:", result.Message);
         Assert.Equal(["S1"], result.Citations);
     }
 
@@ -143,9 +145,66 @@ public sealed class TranscriptQnaTests : IDisposable
             CancellationToken.None);
 
         Assert.Contains("launch date is Friday", result.Message);
+        Assert.Contains("Context: live ACS captions.", result.Message);
+        Assert.Contains("Latest persistence: 2026-10-16T15:00:02", result.Message);
+        Assert.Contains("does not confirm that capture is still connected", result.Message);
         Assert.Equal("tenant-a", liveStore.RequestedTenantId);
         Assert.Equal("meeting-live", liveStore.RequestedMeetingId);
         Assert.Null(completedStore.RequestedTenantId);
+        var diagnostic = await service.DescribeContextAsync("tenant-a", "conversation-a", CancellationToken.None);
+        Assert.Contains("Context: live ACS captions.", diagnostic);
+        Assert.Contains("unknown", diagnostic);
+    }
+
+    [Fact]
+    public async Task Diagnostic_reports_completed_context_even_without_active_meeting()
+    {
+        var service = CreateService(new StubSourceDocumentStore
+        {
+            Document = CreateDocument(new SourceChunk("chunk-0", 0, TimeSpan.Zero, TimeSpan.FromSeconds(1), ["Ada"], "Approved."))
+        }, new StubAnswerGenerator("unused"));
+
+        var message = await service.DescribeContextAsync("tenant-a", "conversation-a", CancellationToken.None);
+
+        Assert.Contains("Context: completed transcript.", message);
+        Assert.DoesNotContain("Capture heartbeat", message);
+    }
+
+    [Fact]
+    public async Task Active_meeting_without_captions_preserves_completed_fallback_and_labels_it()
+    {
+        var activeMeetings = new ActiveMeetingStore();
+        activeMeetings.Set("conversation-a", new ActiveMeetingTarget("resource", "organizer", "tenant-a", "meeting-live"));
+        var completedStore = new StubSourceDocumentStore
+        {
+            Document = CreateDocument(new SourceChunk("chunk-0", 0, TimeSpan.Zero, TimeSpan.FromSeconds(1), ["Ada"], "The launch is Friday."))
+        };
+        var service = CreateService(completedStore, new StubAnswerGenerator("The launch is Friday [S1]."),
+            activeMeetingStore: activeMeetings);
+
+        var result = await service.AnswerAsync("tenant-a", "conversation-a", "When is the launch?", CancellationToken.None);
+
+        Assert.Contains("Context: completed transcript.", result.Message);
+        Assert.DoesNotContain("Context: live ACS", result.Message);
+        Assert.Equal("tenant-a", completedStore.RequestedTenantId);
+        Assert.Equal("conversation-a", completedStore.RequestedConversationId);
+    }
+
+    [Fact]
+    public async Task Unknown_fact_refusal_labels_its_source_without_calling_the_model()
+    {
+        var generator = new StubAnswerGenerator("unused");
+        var service = CreateService(new StubSourceDocumentStore
+        {
+            Document = CreateDocument(new SourceChunk("chunk-0", 0, TimeSpan.Zero, TimeSpan.FromSeconds(1), ["Ada"], "The budget is 730."))
+        }, generator);
+
+        var result = await service.AnswerAsync("tenant-a", "conversation-a", "quasar nebula", CancellationToken.None);
+
+        Assert.Contains("couldn't find transcript material", result.Message);
+        Assert.Contains("Context: completed transcript.", result.Message);
+        Assert.Empty(result.Citations);
+        Assert.Equal(0, generator.CallCount);
     }
 
     [Fact]
@@ -344,7 +403,8 @@ public sealed class TranscriptQnaTests : IDisposable
                 AnswerTimeout = answerTimeout ?? TimeSpan.FromMinutes(2)
             }),
             Options.Create(new LiveContextOptions { Enabled = true }),
-            NullLogger<TranscriptQuestionAnsweringService>.Instance);
+            NullLogger<TranscriptQuestionAnsweringService>.Instance,
+            new LiveCaptureStatusService());
 
     private FileTranscriptStore CreateFileStore() =>
         new(
