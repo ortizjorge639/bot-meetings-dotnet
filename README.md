@@ -131,6 +131,10 @@ dotnet publish BotMeetings.csproj -c Release --no-restore -o publish
 
 Deploy the `publish` directory to the App Service created by Bicep. The supplied GitHub workflow does this for the repository's configured environment; update its environment variables and OIDC secrets before enabling it in another repository.
 
+The checked-in workflow is pinned to the existing `meeting-poc-438871-izha3l56k5kdy` pilot in `bot-meeting-poc-rg`, subscription `cbab996c-0a31-4b66-bdcd-7ead3cad1487`, tenant `8caad56b-f716-4068-b468-3bdf8e4d357b`. It uses the protected `production` environment's existing `AZURE_CLIENT_ID`, verifies the exact app/ACS resources and runtime configuration, and deploys application files only. It does not provision ACS, change permissions, or replace app settings or keys. Changing this target requires updating both the workflow and `infra/validate-pilot.ps1` deliberately.
+
+Manual runs default to `validate_only=true`. A push whose commit message contains `[validate only]` also runs only the read-only preflight. Use that marker for a guarded merge, then dispatch `deploy-main.yml` on `main` with `validate_only=false` after the preflight succeeds. Deployment embeds the commit in the assembly and verifies it along with byte-for-byte ACS page/assets and endpoint health. The health checks do not prove Graph/model access or live media behavior. No authenticated token probe creates an extra ACS identity during validation.
+
 ### 4. Build the Teams package
 
 Use real, public HTTPS legal and support URLs owned by your organization:
@@ -326,7 +330,7 @@ Runtime probes:
 
 - `/health/live`: process is serving HTTP.
 - `/health/ready`: startup configuration succeeded. This is not a dependency probe.
-- `/version`: assembly version and `BUILD_COMMIT` setting.
+- `/version`: assembly version, embedded `BuildCommit` (or legacy `BUILD_COMMIT` setting), and `commitSource`. Automated deployment requires `commitSource=assembly`.
 
 ## Security and data handling
 

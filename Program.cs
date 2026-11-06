@@ -305,11 +305,18 @@ webApp.MapGet("/meeting", () => Results.Content(
 
 webApp.MapGet("/health/live", () => Results.Ok(new { status = "healthy" }));
 webApp.MapGet("/health/ready", () => Results.Ok(new { status = "ready" }));
-webApp.MapGet("/version", () => Results.Ok(new
+webApp.MapGet("/version", () =>
 {
-    version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown",
-    commit = Environment.GetEnvironmentVariable("BUILD_COMMIT") ?? "unknown"
-}));
+    var assembly = Assembly.GetExecutingAssembly();
+    var buildCommit = assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+        .FirstOrDefault(attribute => attribute.Key == "BuildCommit")?.Value;
+    return Results.Ok(new
+    {
+        version = assembly.GetName().Version?.ToString() ?? "unknown",
+        commit = buildCommit ?? Environment.GetEnvironmentVariable("BUILD_COMMIT") ?? "unknown",
+        commitSource = buildCommit is null ? "environment" : "assembly"
+    });
+});
 webApp.MapLiveContextEndpoints(tenantId);
 webApp.MapFallbackToFile("/acs-participant/{*path:nonfile}", "acs-participant/index.html");
 
