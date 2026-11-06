@@ -29,6 +29,7 @@ export function enforceSilentAudio(
   const inspect: PropertyChangedEvent = () => {
     if (stopped) return;
     changed();
+    if (!verified && call.state !== "Connected") return;
     if (!call.isMuted) {
       void fail(new Error("ACS microphone is not muted. Capture stopped."));
       return;
@@ -41,6 +42,10 @@ export function enforceSilentAudio(
     applying = true;
     void call.muteIncomingAudio().then(() => {
       if (stopped) return;
+      if (call.state !== "Connected") {
+        applying = false;
+        return;
+      }
       if (!call.isMuted || !call.isIncomingAudioMuted) {
         return fail(new Error("Silent ACS audio state could not be confirmed."));
       }

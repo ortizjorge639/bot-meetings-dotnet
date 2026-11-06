@@ -192,6 +192,11 @@ operator unmute control is exposed. Browser microphone permission is not a Teams
 recording command, and SDK mute does not prove that the browser never opens a
 microphone.
 
+Initial mute flags are not treated as confirmed state while the call is connecting
+or in the lobby. Captions remain stopped until the connected call confirms its
+microphone mute and completes speaker mute. An unmuted connected microphone still
+fails closed, as does losing either confirmed mute during capture or reconnection.
+
 **Remaining live-test gate:** SDK 2.0.0 has no incoming-audio join option.
 Post-connect speaker mute cannot rule out brief initial playback. Test join,
 reconnect, denied microphone permission, and caption receipt with both audio paths
