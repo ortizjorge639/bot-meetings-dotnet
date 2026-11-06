@@ -9,6 +9,35 @@ public static class LiveContextEndpoints
 {
     public static void MapLiveContextEndpoints(this WebApplication app, string tenantId)
     {
+        app.MapPost("/api/live-context/status", (
+            CaptureHeartbeatRequest request,
+            HttpContext httpContext,
+            ActiveMeetingStore activeMeetings,
+            LiveCaptureStatusService status,
+            IOptions<LiveContextOptions> configuredOptions,
+            ILogger<LiveCaptureStatusService> logger) =>
+        {
+            var unavailable = CheckAvailabilityAndAuthorization(httpContext, configuredOptions.Value, false, logger);
+            if (unavailable is not null) return unavailable;
+            if (string.IsNullOrWhiteSpace(request.MeetingId) || request.MeetingId.Length > 256 ||
+                request.State is not ("connecting" or "active" or "stopped" or "error") ||
+                request.PendingCaptions is < 0 or > 100 || request.FailedCaptions < 0)
+            {
+                return Results.ValidationProblem(new Dictionary<string, string[]>
+                {
+                    ["status"] = ["A valid meeting, capture state, and nonnegative bounded counts are required."]
+                });
+            }
+            if (!activeMeetings.IsActive(tenantId, request.MeetingId))
+            {
+                logger.LogInformation("Capture heartbeat rejected because the meeting is not active.");
+                return Results.Problem(statusCode: StatusCodes.Status404NotFound, title: "Active meeting not found");
+            }
+            status.Update(tenantId, request, DateTimeOffset.UtcNow);
+            return Results.NoContent();
+        })
+        .WithMetadata(new RequestSizeLimitAttribute(8 * 1024));
+
         app.MapGet("/api/acs/token", async (
             HttpContext httpContext,
             IAcsTokenService tokenService,

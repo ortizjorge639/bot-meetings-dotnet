@@ -131,6 +131,10 @@ dotnet publish BotMeetings.csproj -c Release --no-restore -o publish
 
 Deploy the `publish` directory to the App Service created by Bicep. The supplied GitHub workflow does this for the repository's configured environment; update its environment variables and OIDC secrets before enabling it in another repository.
 
+The checked-in workflow is pinned to the existing `meeting-poc-438871-izha3l56k5kdy` pilot in `bot-meeting-poc-rg`, subscription `cbab996c-0a31-4b66-bdcd-7ead3cad1487`, tenant `8caad56b-f716-4068-b468-3bdf8e4d357b`. It uses the protected `production` environment's existing `AZURE_CLIENT_ID`, verifies the exact app/ACS resources and runtime configuration, and deploys application files only. It does not provision ACS, change permissions, or replace app settings or keys. Changing this target requires updating both the workflow and `infra/validate-pilot.ps1` deliberately.
+
+Manual runs default to `validate_only=true`. A push whose commit message contains `[validate only]` also runs only the read-only preflight. Use that marker for a guarded merge, then dispatch `deploy-main.yml` on `main` with `validate_only=false` after the preflight succeeds. Deployment embeds the commit in the assembly and verifies it along with byte-for-byte ACS page/assets and endpoint health. The health checks do not prove Graph/model access or live media behavior. No authenticated token probe creates an extra ACS identity during validation.
+
 ### 4. Build the Teams package
 
 Use real, public HTTPS legal and support URLs owned by your organization:
@@ -152,21 +156,112 @@ The package is written to `appPackage/build/bot-meetings.zip`. Keep both IDs sta
 
 For development, in Teams select **Apps** > **Manage your apps** > **Upload an app** > **Upload a custom app**. Add it to a scheduled private meeting chat before the meeting starts.
 
+If the global app picker omits a new meeting, use **Calendar > meeting > Chat with
+participants > Chat dropdown > Add a tab > Meeting Copilot**. In the observed Teams
+web flow, dismissing the app settings compatibility warning with **X** still added
+the app. Confirm the chat's installation notice and the bot's meeting-start card;
+installation alone does not establish an active meeting binding.
+
 To test live context:
 
 1. Start the scheduled meeting with at least one Teams participant.
 2. Open `https://<app-name>.azurewebsites.net/acs-participant/` in current
    Microsoft Edge or Google Chrome. Firefox captions are not supported.
-3. Enter the meeting join link, participant display name, and configured
-   live-context access key, then select **Join meeting**.
+3. Copy the **Join Meeting** link address from the bot's meeting-start card.
+   Enter that link, participant display name, and configured live-context access
+   key, then select **Join meeting**. Short `/meet/` invitation links and legacy
+   `/l/meetup-join/` links are not interchangeable in the resolver. If there is no
+   start card, stop and inspect the start event. Do not register an arbitrary link.
 4. Admit the ACS participant from the Teams lobby unless the meeting permits it
    to bypass the lobby.
-5. Confirm the participant reports connected captions, then have at least two
-   people speak. The page should report delivered finalized captions.
+5. Confirm the page reports both ACS audio controls muted and captions active,
+   then have at least two people speak. The page reports accepted, pending, and
+   failed final captions separately. A successful POST needs an accepted receipt.
 6. Ask a question in the meeting chat whose answer was spoken after the ACS
    participant joined. Verify that the answer cites only captured live context.
 7. Notify all participants before enabling or storing captions and follow the
    applicable consent, retention, and privacy requirements.
+
+#### Silent capture and clean proof
+
+Teams and ACS are independent call legs. Muting Teams does not mute the browser's
+microphone. The client joins with `audioOptions.muted = true` and calls
+`muteIncomingAudio()` after connection, before starting captions. It monitors both
+mute flags and stops the session if either confirmed mute state is lost. No
+operator unmute control is exposed. Browser microphone permission is not a Teams
+recording command, and SDK mute does not prove that the browser never opens a
+microphone.
+
+**Remaining live-test gate:** SDK 2.0.0 has no incoming-audio join option.
+Post-connect speaker mute cannot rule out brief initial playback. Test join,
+reconnect, denied microphone permission, and caption receipt with both audio paths
+muted in a real Teams call. Do not claim a permission-free or zero-playback client
+until those tests pass. Leave ACS to stop capture; use headphones or a separate
+device for controlled diagnostics.
+
+Use a new meeting with fresh non-sensitive facts. With Teams microphone on and
+off, confirm ACS sends no speech. Test browser microphone permission allowed and
+denied separately. Use two speakers on separate devices; one utterance must not
+gain a second "Live Context POC" speaker. Partial then Final is normal progression:
+only final events go to the server. Do not merge identical text across speakers
+or remove a speaker by display name to hide an audio-source defect.
+
+Caption delivery uses a memory-only queue of at most 100 pending events, a
+10-second request timeout, a 60-second total age limit, and at most three retries
+after the first attempt (1, 2, and 4 seconds). Network failures, timeouts, HTTP 408,
+429, and 5xx retry; `Retry-After` is honored within the age bound. Other HTTP
+failures stop the queue. Retries reuse the exact payload so server deduplication
+remains effective. Queue overflow, expiry, and failed or abandoned delivery are
+visible. Leave, refresh, crash, or closing the page can lose pending captions.
+Drain the pending count before leaving. Call, agent, client, credential, listeners,
+timers, and in-flight work are released on exit; page-exit cleanup is best effort.
+
+The browser posts a client-reported status heartbeat every 15 seconds to the
+key-protected `/api/live-context/status` endpoint. The server requires the active
+meeting in the configured tenant, timestamps receipt, and marks status unknown
+after 45 seconds without a heartbeat. Heartbeats are in-memory and reset on
+server restart. They do not prove audio activity, successful caption persistence,
+or a single capture client. A quiet meeting can have a current heartbeat and no
+new captions. After disconnect, stored captions remain usable but are not proof
+that capture continues.
+
+Answers label live ACS captions with their latest persistence time and age, or
+completed transcripts with their ingestion time and age. `diagnose transcript`
+reports available source context and heartbeat state separately from its Graph
+probe. Source selection still prefers available captions for the active meeting,
+then falls back to the latest completed transcript for the same tenant and chat.
+
+#### No-client assessment (November 5, 2026)
+
+Read-only Work IQ path/schema discovery exposed
+`/copilot/communications/realtimeActivityFeed/multiActivitySubscriptions` (create)
+and `/{subscriptionId}` (fetch/delete). The create schema requires the caller's
+own object ID, a meeting locator (join URL, numeric join ID/passcode, or organizer
+metadata), and a transcript activity envelope. The resource schema returns
+`activities.transcript.status` and `activities.transcript.transport.url`; its
+description identifies a Work IQ SSE endpoint rather than a raw upstream WebSocket.
+This identifies a concrete no-capture-browser candidate, not an implemented or
+tenant-validated integration.
+
+[Work IQ authentication](https://learn.microsoft.com/en-us/microsoft-365/copilot/extensibility/work-iq/api-overview)
+requires delegated user context (OBO supported; app-only unsupported) and uses
+Copilot Credits. The existing app-only Graph transcript credential is not a
+substitute. The connected developer MCP identity does not establish access for the
+pilot app or tenant.
+
+[Teams live-transcript rules](https://learn.microsoft.com/en-us/microsoftteams/meeting-transcript-api-access)
+require active transcription, AI allowed in the meeting, the correct delegated
+permissions, and Work IQ enablement. The organizer's tenant controls access. The
+separate Work IQ transcript access control takes effect November 14, 2026.
+Unlike the observed ACS caption path, this route requires Teams transcription.
+
+**Assessment: interface discovered; end-to-end proof blocked on approved access
+and a controlled live meeting.** No subscription, auth flow, new scopes, billing,
+consent, or tenant setting was created or changed. Before building an adapter,
+confirm the pilot identity, exact delegated scopes, approved billing, stream
+authentication/reconnect contract, meeting isolation, and fresh-fact retrieval.
+A Teams tab still needs an open client and does not satisfy the no-client
+constraint. Keep the existing architecture until a separate proof supports a change.
 
 To test the existing Graph path:
 
@@ -235,7 +330,7 @@ Runtime probes:
 
 - `/health/live`: process is serving HTTP.
 - `/health/ready`: startup configuration succeeded. This is not a dependency probe.
-- `/version`: assembly version and `BUILD_COMMIT` setting.
+- `/version`: assembly version, embedded `BuildCommit` (or legacy `BUILD_COMMIT` setting), and `commitSource`. Automated deployment requires `commitSource=assembly`.
 
 ## Security and data handling
 

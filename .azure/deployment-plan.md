@@ -2,7 +2,7 @@
 
 ## Status
 
-Ready for Validation
+Validation Blocked
 
 ## 1. Deployment intent
 
@@ -175,7 +175,23 @@ This rollback preserves the existing V1 behavior.
 
 ## 9. Validation Proof
 
-Pending `azure-validate`. Only that workflow may mark this plan as Validated.
+Azure validation did not pass, so this plan is not validated and deployment
+must not proceed.
+
+GitHub Actions preflight evidence:
+
+| Run | Result |
+|---|---|
+| `38945737282` | Failed safely before validation because the preflight job was not initially bound to the protected GitHub environment. No Azure changes occurred. |
+| `38945875921` | OIDC login succeeded and the existing App Service target was found. Azure deployment validation failed with `ReadOnlyDisabledSubscription`: the target subscription is disabled/read-only. No Azure changes occurred and the deploy job was skipped. |
+
+Required remediation:
+
+- Re-enable the subscription configured by the repository's
+  `AZURE_SUBSCRIPTION_ID` secret; or
+- Approve preparation of a separate nonproduction deployment in an active
+  subscription, including new Azure Bot/App Service configuration and Teams
+  package updates.
 
 Preparation evidence:
 

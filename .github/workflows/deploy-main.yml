@@ -5,6 +5,11 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      validate_only:
+        description: Check the existing pilot without deploying
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -15,10 +20,12 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AZURE_WEBAPP_NAME: bot-meeting-plan
-  AZURE_RESOURCE_GROUP: bot-meeting-rg
-  AZURE_WEBAPP_URL: https://bot-meeting-plan-d3htfcbtevfphuf3.centralus-01.azurewebsites.net
-  AZURE_COMMUNICATION_SERVICE_NAME: bot-meeting-plan-acs-jortizflores
+  AZURE_SUBSCRIPTION_ID: cbab996c-0a31-4b66-bdcd-7ead3cad1487
+  AZURE_TENANT_ID: 8caad56b-f716-4068-b468-3bdf8e4d357b
+  AZURE_WEBAPP_NAME: meeting-poc-438871-izha3l56k5kdy
+  AZURE_RESOURCE_GROUP: bot-meeting-poc-rg
+  AZURE_WEBAPP_URL: https://meeting-poc-438871-izha3l56k5kdy.azurewebsites.net
+  AZURE_COMMUNICATION_SERVICE_NAME: meeting-poc-438871-acs-izha3l56k5kdy
   DOTNET_VERSION: 10.0.x
 
 jobs:
@@ -34,39 +41,19 @@ jobs:
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Verify target and validate ACS deployment
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          az webapp show \
-            --name "$AZURE_WEBAPP_NAME" \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --output none
-
-          az deployment group validate \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --template-file infra/live-context.bicep \
-            --parameters \
-              communicationServiceName="$AZURE_COMMUNICATION_SERVICE_NAME" \
-              communicationDataLocation="United States" \
-            --output none
-
-          az deployment group what-if \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --template-file infra/live-context.bicep \
-            --parameters \
-              communicationServiceName="$AZURE_COMMUNICATION_SERVICE_NAME" \
-              communicationDataLocation="United States" \
-            --result-format ResourceIdOnly \
-            --no-pretty-print
+      - name: Verify existing pilot and preserved configuration
+        shell: pwsh
+        run: ./infra/validate-pilot.ps1
 
   build-test-deploy:
     needs: preflight
-    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[validate only]')
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'workflow_dispatch' && !inputs.validate_only) ||
+       (github.event_name == 'push' && !contains(github.event.head_commit.message, '[validate only]')))
     runs-on: ubuntu-latest
     environment:
       name: production
@@ -106,76 +93,18 @@ jobs:
         run: npm run build
 
       - name: Publish
-        run: dotnet publish BotMeetings.csproj --configuration Release --no-restore --output publish
+        run: dotnet publish BotMeetings.csproj --configuration Release --no-restore --output publish -p:BuildCommit=$GITHUB_SHA
 
       - name: Sign in to Azure
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Configure ACS live context
-        shell: bash
-        env:
-          LIVE_CONTEXT_ACCESS_KEY: ${{ secrets.LIVE_CONTEXT_ACCESS_KEY }}
-        run: |
-          set -euo pipefail
-
-          if [ "${#LIVE_CONTEXT_ACCESS_KEY}" -lt 32 ]; then
-            echo "::error::LIVE_CONTEXT_ACCESS_KEY must contain at least 32 characters."
-            exit 1
-          fi
-
-          az extension add \
-            --name communication \
-            --upgrade \
-            --yes \
-            --output none
-
-          if ! az resource show \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --resource-type "Microsoft.Communication/communicationServices" \
-            --name "$AZURE_COMMUNICATION_SERVICE_NAME" \
-            --output none 2>/dev/null; then
-            az communication create \
-              --name "$AZURE_COMMUNICATION_SERVICE_NAME" \
-              --resource-group "$AZURE_RESOURCE_GROUP" \
-              --location "Global" \
-              --data-location "United States" \
-              --output none
-          fi
-
-          acs_connection_string="$(az communication list-key \
-            --name "$AZURE_COMMUNICATION_SERVICE_NAME" \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --query primaryConnectionString \
-            --output tsv)"
-
-          if [ -z "$acs_connection_string" ]; then
-            echo "::error::Azure Communication Services did not return a connection string."
-            exit 1
-          fi
-
-          az webapp config appsettings set \
-            --name "$AZURE_WEBAPP_NAME" \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --settings \
-              "LiveContext__Enabled=true" \
-              "LiveContext__AccessKey=$LIVE_CONTEXT_ACCESS_KEY" \
-              "LiveContext__AcsConnectionString=$acs_connection_string" \
-              "LiveContext__DataPath=/home/data/bot-meetings/live-context" \
-            --output none
-
-          unset acs_connection_string
-
-      - name: Record build provenance
-        run: |
-          az webapp config appsettings set \
-            --name "$AZURE_WEBAPP_NAME" \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --settings "BUILD_COMMIT=$GITHUB_SHA" \
-            --output none
+      - name: Recheck target before deployment
+        shell: pwsh
+        run: ./infra/validate-pilot.ps1
 
       - name: Deploy
         uses: azure/webapps-deploy@v3
@@ -184,56 +113,5 @@ jobs:
           package: publish
 
       - name: Verify deployment
-        shell: bash
-        run: |
-          meeting_body="$(mktemp)"
-
-          curl --fail --silent --show-error \
-            --retry 12 --retry-delay 5 --retry-all-errors \
-            --max-time 180 \
-            --output "$meeting_body" \
-            "$AZURE_WEBAPP_URL/meeting"
-
-          grep --fixed-strings --quiet "Bot Meetings" "$meeting_body"
-          grep --fixed-strings --quiet "connected to the meeting" "$meeting_body"
-
-          curl --fail --silent --show-error \
-            --retry 12 --retry-delay 5 --retry-all-errors \
-            --max-time 180 \
-            "$AZURE_WEBAPP_URL/acs-participant/" | grep --fixed-strings --quiet "ACS meeting captions"
-
-          curl --fail --silent --show-error \
-            --retry 12 --retry-delay 5 --retry-all-errors \
-            --max-time 180 \
-            "$AZURE_WEBAPP_URL/health/live" | grep --fixed-strings --quiet '"status":"healthy"'
-
-          curl --fail --silent --show-error \
-            --max-time 30 \
-            "$AZURE_WEBAPP_URL/health/ready" | grep --fixed-strings --quiet '"status":"ready"'
-
-          curl --fail --silent --show-error \
-            --max-time 30 \
-            "$AZURE_WEBAPP_URL/version" | grep --fixed-strings --quiet "$GITHUB_SHA"
-
-          messages_status="$(curl --silent --show-error \
-            --output /dev/null --write-out '%{http_code}' \
-            --max-time 30 \
-            "$AZURE_WEBAPP_URL/api/messages")"
-
-          test "$messages_status" = "405"
-
-          token_without_key_status="$(curl --silent --show-error \
-            --output /dev/null --write-out '%{http_code}' \
-            --max-time 30 \
-            "$AZURE_WEBAPP_URL/api/acs/token")"
-
-          test "$token_without_key_status" = "401"
-
-          token_response="$(curl --fail --silent --show-error \
-            --max-time 30 \
-            --header "X-Live-Context-Key: ${{ secrets.LIVE_CONTEXT_ACCESS_KEY }}" \
-            "$AZURE_WEBAPP_URL/api/acs/token")"
-
-          jq --exit-status \
-            '(.userId | length > 0) and (.token | length > 0) and (.expiresOn | length > 0)' \
-            <<< "$token_response" > /dev/null
+        shell: pwsh
+        run: ./infra/validate-pilot.ps1 -ExpectedCommit $env:GITHUB_SHA -PublishedPath ./publish

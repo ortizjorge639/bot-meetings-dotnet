@@ -74,6 +74,7 @@ builder.Services
     .ValidateOnStart();
 builder.Services.AddSingleton<ILiveContextStore, FileLiveContextStore>();
 builder.Services.AddSingleton<IAcsTokenService, AcsTokenService>();
+builder.Services.AddSingleton<LiveCaptureStatusService>();
 
 var webApp = builder.Build();
 var teamsApp = webApp.UseTeams(true);
@@ -268,8 +269,11 @@ teamsApp.OnMessage(async (context, cancellationToken) =>
         if (question.Contains("diagnose transcript", StringComparison.OrdinalIgnoreCase))
         {
             var diagnostic = webApp.Services.GetRequiredService<MeetingTranscriptDiagnosticService>();
+            var qna = webApp.Services.GetRequiredService<TranscriptQuestionAnsweringService>();
+            var source = await qna.DescribeContextAsync(
+                tenantId, context.Activity.Conversation.Id, cancellationToken);
             var message = await diagnostic.CheckAsync(context.Activity.Conversation.Id, cancellationToken);
-            await context.Send(message, cancellationToken);
+            await context.Send($"{source}\n\n**Graph diagnostic**\n{message}", cancellationToken);
             return;
         }
 
@@ -301,11 +305,18 @@ webApp.MapGet("/meeting", () => Results.Content(
 
 webApp.MapGet("/health/live", () => Results.Ok(new { status = "healthy" }));
 webApp.MapGet("/health/ready", () => Results.Ok(new { status = "ready" }));
-webApp.MapGet("/version", () => Results.Ok(new
+webApp.MapGet("/version", () =>
 {
-    version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "unknown",
-    commit = Environment.GetEnvironmentVariable("BUILD_COMMIT") ?? "unknown"
-}));
+    var assembly = Assembly.GetExecutingAssembly();
+    var buildCommit = assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+        .FirstOrDefault(attribute => attribute.Key == "BuildCommit")?.Value;
+    return Results.Ok(new
+    {
+        version = assembly.GetName().Version?.ToString() ?? "unknown",
+        commit = buildCommit ?? Environment.GetEnvironmentVariable("BUILD_COMMIT") ?? "unknown",
+        commitSource = buildCommit is null ? "environment" : "assembly"
+    });
+});
 webApp.MapLiveContextEndpoints(tenantId);
 webApp.MapFallbackToFile("/acs-participant/{*path:nonfile}", "acs-participant/index.html");
 

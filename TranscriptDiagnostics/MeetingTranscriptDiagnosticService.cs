@@ -416,7 +416,7 @@ public sealed class MeetingTranscriptDiagnosticService(
         if (string.IsNullOrWhiteSpace(target.MeetingResourceId) ||
             string.IsNullOrWhiteSpace(target.OrganizerUserId))
         {
-            return "The active meeting has live context, but Graph transcript identifiers are not available yet. The Graph transcript diagnostic was not run.";
+            return "The active meeting was captured, but Graph transcript identifiers are not available yet. The Graph transcript diagnostic was not run. Meeting capture alone does not prove that captions arrived.";
         }
 
         try

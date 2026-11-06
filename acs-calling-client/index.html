@@ -9,6 +9,8 @@
     <main>
       <h1>ACS meeting captions</h1>
       <p class="notice">This participant sends final English captions to the live-context POC. Inform meeting participants before starting captions.</p>
+      <p class="notice">ACS and Teams have separate audio controls. This client requests a muted microphone and mutes ACS speaker output after connection, before starting captions. A brief join-time playback gap is not yet ruled out. Browser microphone permission is not Teams recording. Leave ACS to stop capture.</p>
+      <p>Use the <strong>Join Meeting</strong> link from the bot's meeting-start card. Short invitation links may not match. If the card is absent, stop and check the meeting-start event.</p>
 
       <form id="join-form">
         <label>Teams meeting link <input id="meeting-link" type="url" required autocomplete="off" /></label>
@@ -25,7 +27,12 @@
           <div><dt>Call connection</dt><dd id="call-state">Not joined</dd></div>
           <div><dt>Lobby</dt><dd id="lobby-state">Not in lobby</dd></div>
           <div><dt>Captions</dt><dd id="caption-state">Not started</dd></div>
+          <div><dt>ACS microphone</dt><dd id="microphone-state">Not joined</dd></div>
+          <div><dt>ACS speaker output</dt><dd id="speaker-state">Not joined</dd></div>
+          <div><dt>Capture heartbeat</dt><dd id="heartbeat-state">Not sent</dd></div>
           <div><dt>Final captions posted</dt><dd id="post-count">0</dd></div>
+          <div><dt>Final captions pending</dt><dd id="pending-count">0</dd></div>
+          <div><dt>Final captions failed</dt><dd id="failed-count">0</dd></div>
         </dl>
       </section>
 
