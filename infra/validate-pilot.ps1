@@ -105,7 +105,9 @@ if ($ExpectedCommit) {
 
     $webRoot = Join-Path $PublishedPath 'wwwroot'
     $captionRoot = Join-Path $webRoot 'acs-participant'
-    $files = @(Get-ChildItem -LiteralPath $captionRoot -File -Recurse)
+    # SDK compression sidecars are not standalone browser asset URLs.
+    $files = @(Get-ChildItem -LiteralPath $captionRoot -File -Recurse |
+        Where-Object { $_.Extension -notin @('.br', '.gz') })
     if ($files.Count -eq 0) { throw 'The published ACS artifact is missing.' }
     foreach ($file in $files) {
         $relative = [IO.Path]::GetRelativePath((Resolve-Path $webRoot).Path, $file.FullName).Replace('\', '/')

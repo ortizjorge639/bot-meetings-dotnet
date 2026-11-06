@@ -126,11 +126,14 @@ $artifact = Join-Path ([IO.Path]::GetTempPath()) "pilot-validation-$([guid]::New
 $webRoot = Join-Path $artifact 'wwwroot'
 $captionRoot = Join-Path $webRoot 'acs-participant'
 $index = Join-Path $captionRoot 'index.html'
+$sidecars = @("${index}.br", "${index}.gz")
 try {
     Reset-Fixture
     $null = [IO.Directory]::CreateDirectory($captionRoot)
     [IO.File]::WriteAllBytes($index, $global:PilotTestAssetBytes)
     $parameters = @{ ExpectedCommit = 'a' * 40; PublishedPath = $artifact }
+    & $validator @parameters
+    foreach ($sidecar in $sidecars) { [IO.File]::WriteAllBytes($sidecar, [byte[]] @(1, 2, 3)) }
     & $validator @parameters
     $global:PilotTestAssetBytes = [Text.Encoding]::UTF8.GetBytes('outdated-content')
     Assert-Rejected 'Deployed ACS artifact differs' $parameters
@@ -140,9 +143,10 @@ try {
     Reset-Fixture
     $global:PilotTestCommit = 'b' * 40
     Assert-Rejected 'running binaries did not report' $parameters
-    Write-Host '20 pilot deployment guard and artifact checks passed.'
+    Write-Host '21 pilot deployment guard and artifact checks passed.'
 }
 finally {
+    foreach ($sidecar in $sidecars) { if (Test-Path -LiteralPath $sidecar) { Remove-Item -LiteralPath $sidecar } }
     Remove-Item -LiteralPath $index
     Remove-Item -LiteralPath $captionRoot
     Remove-Item -LiteralPath $webRoot
