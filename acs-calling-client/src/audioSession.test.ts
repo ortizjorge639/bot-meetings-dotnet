@@ -56,14 +56,69 @@ describe("silent audio policy", () => {
     expect(listeners.size).toBe(0);
   });
 
-  it("rejects an unmuted join before caption setup", () => {
-    const { call } = fakeCall("Connecting");
+  it.each(["Connecting", "InLobby"] as const)("waits for connected mute state during %s", async (state) => {
+    const { call, emit } = fakeCall(state);
     call.isMuted = false;
     const ready = vi.fn();
     const failed = vi.fn();
     enforceSilentAudio(call, ready, failed, vi.fn());
+    emit("isMutedChanged");
+    expect(failed).not.toHaveBeenCalled();
+    expect(ready).not.toHaveBeenCalled();
+    expect(call.muteIncomingAudio).not.toHaveBeenCalled();
+    call.isMuted = true;
+    emit("isMutedChanged");
+    expect(ready).not.toHaveBeenCalled();
+    call.state = "Connected";
+    emit("stateChanged");
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledOnce());
+    expect(failed).not.toHaveBeenCalled();
+  });
+
+  it("still rejects an unmuted connected call before caption setup", () => {
+    const { call, emit } = fakeCall("Connecting");
+    call.isMuted = false;
+    const ready = vi.fn();
+    const failed = vi.fn();
+    enforceSilentAudio(call, ready, failed, vi.fn());
+    call.state = "Connected";
+    emit("stateChanged");
     expect(failed).toHaveBeenCalledOnce();
     expect(ready).not.toHaveBeenCalled();
+    expect(call.muteIncomingAudio).not.toHaveBeenCalled();
+  });
+
+  it("does not start captions when connection is lost during speaker mute", async () => {
+    const { call, emit } = fakeCall();
+    let finish!: () => void;
+    call.muteIncomingAudio.mockImplementationOnce(() => new Promise(resolve => {
+      finish = () => { call.isIncomingAudioMuted = true; resolve(); };
+    }));
+    const ready = vi.fn();
+    const failed = vi.fn();
+    enforceSilentAudio(call, ready, failed, vi.fn());
+    call.state = "Connecting";
+    emit("stateChanged");
+    finish();
+    await Promise.resolve();
+    expect(ready).not.toHaveBeenCalled();
+    expect(failed).not.toHaveBeenCalled();
+    call.state = "Connected";
+    emit("stateChanged");
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledOnce());
+    expect(call.muteIncomingAudio).toHaveBeenCalledTimes(2);
+  });
+
+  it("still fails immediately if a confirmed microphone mute is lost while reconnecting", async () => {
+    const { call, emit } = fakeCall();
+    const ready = vi.fn();
+    const failed = vi.fn();
+    enforceSilentAudio(call, ready, failed, vi.fn());
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledOnce());
+    call.state = "Connecting";
+    call.isMuted = false;
+    emit("stateChanged");
+    expect(failed).toHaveBeenCalledOnce();
   });
 
   it("reports mute rejection without starting captions", async () => {

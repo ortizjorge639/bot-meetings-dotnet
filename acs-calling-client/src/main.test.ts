@@ -98,6 +98,26 @@ afterEach(() => {
 });
 
 describe("capture session wiring (mocked SDK, not a live audio test)", () => {
+  it("waits for connected mute state instead of failing during initial call setup", async () => {
+    const test = fixture();
+    test.call.state = "Connecting";
+    test.call.isMuted = false;
+    await import("./main");
+    test.submit();
+    await vi.waitFor(() => expect(test.get("microphone-state").textContent).toContain("awaiting connection"));
+    expect(test.captions.startCaptions).not.toHaveBeenCalled();
+    expect(test.call.hangUp).not.toHaveBeenCalled();
+    expect(test.get("diagnostics").textContent).toBe("None");
+    test.call.isMuted = true;
+    test.call.state = "Connected";
+    test.emit("stateChanged");
+    await vi.waitFor(() => expect(test.captions.startCaptions).toHaveBeenCalledOnce());
+    expect(test.get("microphone-state").textContent).toBe("Muted");
+    expect(test.get("speaker-state").textContent).toBe("Muted");
+    test.leave();
+    await vi.waitFor(() => expect(test.agent.dispose).toHaveBeenCalledOnce());
+  });
+
   it("uses muted join, starts captions after speaker mute, and disposes resources on leave", async () => {
     const test = fixture();
     await import("./main");

@@ -142,7 +142,8 @@ async function joinMeeting(): Promise<void> {
       if (isCurrent(current)) void startCaptions(current).catch((error: unknown) => failSession(current, "Caption start failed", error));
     }, (error) => { void failSession(current, "Audio policy failed", error); }, () => {
       if (!isCurrent(current)) return;
-      microphoneState.textContent = call.isMuted ? "Muted" : "UNSAFE: not muted";
+      microphoneState.textContent = call.isMuted ? "Muted"
+        : call.state === "Connected" ? "UNSAFE: not muted" : "Muted join requested; awaiting connection";
       speakerState.textContent = call.isIncomingAudioMuted ? "Muted" : "Not yet muted";
     });
     if (!isCurrent(current)) {
